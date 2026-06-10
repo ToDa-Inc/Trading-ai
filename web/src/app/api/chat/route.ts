@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { embedQuery, streamChatResponse } from "@/lib/gemini";
+import { embedQuery, streamChatResponse } from "@/lib/llm";
 
 export const maxDuration = 60;
 

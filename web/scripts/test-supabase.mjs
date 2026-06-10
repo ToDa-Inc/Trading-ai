@@ -75,7 +75,7 @@ if (bucketsError) {
 }
 
 const { data: rpcTest, error: rpcError } = await admin.rpc("match_chunks", {
-  query_embedding: Array(768).fill(0),
+  query_embedding: Array(1536).fill(0),
   match_count: 1,
   filter_user_id: "00000000-0000-0000-0000-000000000000",
 });

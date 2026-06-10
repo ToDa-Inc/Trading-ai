@@ -2,12 +2,15 @@ import json
 import time
 from pathlib import Path
 
+import httpx
 from google import genai
 from google.genai import types
 
 from app.config import settings
 
 client = genai.Client(api_key=settings.gemini_api_key)
+
+OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
 ANALYSIS_PROMPT = """Analiza este video de trading en detalle. El usuario explica su técnica y estrategia de trading.
 
@@ -94,13 +97,19 @@ def analyze_video(gemini_file) -> dict:
 
 
 def embed_text(text: str) -> list[float]:
-    """Generate embedding for text."""
-    result = client.models.embed_content(
-        model=settings.gemini_embedding_model,
-        contents=text,
-        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+    """Generate embedding for text via OpenRouter (OpenAI-compatible)."""
+    resp = httpx.post(
+        f"{OPENROUTER_BASE}/embeddings",
+        headers={
+            "Authorization": f"Bearer {settings.openrouter_api_key}",
+            "Content-Type": "application/json",
+            "X-Title": "Trading Coach Worker",
+        },
+        json={"model": settings.openrouter_embedding_model, "input": text},
+        timeout=60,
     )
-    return result.embeddings[0].values
+    resp.raise_for_status()
+    return resp.json()["data"][0]["embedding"]
 
 
 def merge_strategy_profile(existing: str, new_analysis: dict) -> str:
