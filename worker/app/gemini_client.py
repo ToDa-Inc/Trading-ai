@@ -12,6 +12,8 @@ client = genai.Client(api_key=settings.gemini_api_key)
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
+# deploy-trigger: 2026-06-11 (verificar auto-deploy en Railway)
+
 _TRANSIENT_MARKERS = ("503", "UNAVAILABLE", "overloaded", "high demand", "429", "RESOURCE_EXHAUSTED")
 
 
