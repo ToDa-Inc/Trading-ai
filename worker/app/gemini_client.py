@@ -12,6 +12,24 @@ client = genai.Client(api_key=settings.gemini_api_key)
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
+_TRANSIENT_MARKERS = ("503", "UNAVAILABLE", "overloaded", "high demand", "429", "RESOURCE_EXHAUSTED")
+
+
+def _with_retry(fn, *, attempts: int = 5, base_delay: float = 5.0):
+    """Run fn(), retrying on transient Gemini errors with exponential backoff."""
+    last_err = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            if not any(m in msg for m in _TRANSIENT_MARKERS):
+                raise
+            last_err = e
+            if i < attempts - 1:
+                time.sleep(base_delay * (2 ** i))
+    raise last_err
+
 ANALYSIS_PROMPT = """Analiza este video de trading en detalle. El usuario explica su técnica y estrategia de trading.
 
 Devuelve un JSON con esta estructura exacta:
@@ -72,7 +90,7 @@ def upload_video_to_gemini(file_path: str, mime_type: str = "video/mp4"):
 
 def analyze_video(gemini_file) -> dict:
     """Analyze video with Gemini and return structured JSON."""
-    response = client.models.generate_content(
+    response = _with_retry(lambda: client.models.generate_content(
         model=settings.gemini_video_model,
         contents=[
             types.Content(
@@ -87,7 +105,7 @@ def analyze_video(gemini_file) -> dict:
             temperature=0.2,
             response_mime_type="application/json",
         ),
-    )
+    ))
 
     text = response.text.strip()
     if text.startswith("```"):
@@ -114,12 +132,12 @@ def embed_text(text: str) -> list[float]:
 
 def merge_strategy_profile(existing: str, new_analysis: dict) -> str:
     """Merge existing strategy profile with new video analysis."""
-    response = client.models.generate_content(
+    response = _with_retry(lambda: client.models.generate_content(
         model=settings.gemini_chat_model,
         contents=STRATEGY_MERGE_PROMPT.format(
             existing=existing or "Ninguno (primer video)",
             new_analysis=json.dumps(new_analysis, ensure_ascii=False, indent=2),
         ),
         config=types.GenerateContentConfig(temperature=0.2),
-    )
+    ))
     return response.text.strip()
