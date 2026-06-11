@@ -36,6 +36,10 @@ def process_video(video_id: str):
         user_id = video["user_id"]
         storage_path = video["storage_path"]
 
+        # Clean up any data from previous (failed) runs to stay idempotent
+        supabase.table("chunks").delete().eq("video_id", video_id).execute()
+        supabase.table("video_analyses").delete().eq("video_id", video_id).execute()
+
         # Download from Supabase Storage
         file_data = supabase.storage.from_("trading-videos").download(storage_path)
 
@@ -101,7 +105,7 @@ def process_video(video_id: str):
 
             # Update strategy profile
             profile_resp = supabase.table("strategy_profiles").select("summary_md").eq("user_id", user_id).maybe_single().execute()
-            existing_summary = profile_resp.data["summary_md"] if profile_resp.data else ""
+            existing_summary = profile_resp.data["summary_md"] if profile_resp and profile_resp.data else ""
             new_summary = merge_strategy_profile(existing_summary, analysis)
 
             supabase.table("strategy_profiles").upsert({
