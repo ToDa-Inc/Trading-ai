@@ -121,6 +121,7 @@ export async function* streamChatResponse(
     body: JSON.stringify({
       model: CHAT_MODEL,
       stream: true,
+      max_tokens: 2048,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: buildUserContent(userMessage, context) },
