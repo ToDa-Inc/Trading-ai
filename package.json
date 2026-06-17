@@ -1,0 +1,14 @@
+{
+  "name": "trading-ai",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix web install && npm run setup:worker",
+    "setup:worker": "PYTHON_BIN=$(command -v python3.13 || command -v python3.12) && test -n \"$PYTHON_BIN\" || (echo 'Python 3.12 or 3.13 is required for the worker' && exit 1); $PYTHON_BIN -m venv worker/venv && worker/venv/bin/pip install -r worker/requirements.txt",
+    "dev": "sh -c 'trap \"kill 0\" INT TERM EXIT; npm run dev:web & npm run dev:worker & wait'",
+    "dev:web": "npm --prefix web run dev",
+    "dev:worker": "test -x worker/venv/bin/uvicorn || npm run setup:worker && cd worker && venv/bin/uvicorn app.main:app --reload --port 8000",
+    "build:web": "npm --prefix web run build",
+    "lint:web": "npm --prefix web run lint",
+    "typecheck:web": "cd web && npx tsc --noEmit"
+  }
+}

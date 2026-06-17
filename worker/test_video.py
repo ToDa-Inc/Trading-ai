@@ -1,19 +1,15 @@
-"""Prueba real del pipeline de vídeo con Gemini (sin tocar Supabase ni OpenRouter).
+"""Prueba real del pipeline de vídeo con OpenRouter (sin tocar Supabase).
 Uso: ./venv/bin/python test_video.py <ruta_video.mp4>
 """
 import json
 import sys
 
-from app.gemini_client import analyze_video, upload_video_to_gemini
+from app.openrouter_client import analyze_video
 
 
 def main(path: str):
-    print(f"1) Subiendo {path} a Gemini File API...")
-    f = upload_video_to_gemini(path, "video/mp4")
-    print(f"   OK estado={f.state.name} uri={f.uri}")
-
-    print("2) Analizando con gemini-2.5-flash (JSON estructurado)...")
-    analysis = analyze_video(f)
+    print(f"1) Analizando {path} con OpenRouter (JSON estructurado)...")
+    analysis = analyze_video(path, "video/mp4")
 
     keys = list(analysis.keys())
     print(f"   OK JSON parseado. Claves: {keys}")

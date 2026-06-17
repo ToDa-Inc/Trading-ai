@@ -40,7 +40,23 @@ def verify_secret(x_worker_secret: str | None):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "worker"}
+
+
+@app.get("/ready")
+async def ready():
+    required_settings = {
+        "supabase_url": settings.supabase_url,
+        "supabase_service_role_key": settings.supabase_service_role_key,
+        "openrouter_api_key": settings.openrouter_api_key,
+        "worker_secret": settings.worker_secret,
+    }
+    missing = [key for key, value in required_settings.items() if not value]
+
+    if missing:
+        raise HTTPException(status_code=503, detail={"missing": missing})
+
+    return {"status": "ready", "service": "worker"}
 
 
 @app.post("/ingest")

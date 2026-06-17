@@ -30,44 +30,63 @@ SaaS de coaching de trading con IA. Los usuarios suben videos explicando su estr
 
 ### 2. Variables de entorno
 
-**web/.env.local**
+**web/.env.local** (copia desde `web/.env.example`)
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
-GEMINI_API_KEY=AIza...
-GEMINI_CHAT_MODEL=gemini-2.5-flash
-GEMINI_EMBEDDING_MODEL=text-embedding-004
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_CHAT_MODEL=google/gemini-3.1-flash-lite
+OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
+OPENROUTER_EMBEDDING_DIMENSIONS=768
 WORKER_SECRET=tu-secreto-aleatorio
 ```
 
-**worker/.env** (mismas credenciales + secret)
+**worker/.env** (copia desde `worker/.env.example`)
 ```env
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
-GEMINI_API_KEY=AIza...
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_VIDEO_MODEL=google/gemini-3.1-flash-lite
+OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
+OPENROUTER_EMBEDDING_DIMENSIONS=768
 WORKER_SECRET=tu-secreto-aleatorio
 ```
 
-### 3. Frontend
+### 3. Instalar dependencias
 
 ```bash
-cd web
-npm install
+npm run setup
+```
+
+Esto instala dependencias de `web/` y crea `worker/venv` con las dependencias Python.
+
+### 4. Ejecutar frontend + worker
+
+```bash
 npm run dev
 ```
 
-Abre http://localhost:3000
+- Frontend: http://localhost:3000
+- Web health: http://localhost:3000/api/health
+- Worker health: http://localhost:8000/health
 
-### 4. Worker
+También puedes arrancarlos por separado:
 
 ```bash
-cd worker
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+npm run dev:web
+npm run dev:worker
 ```
+
+## Endpoints locales
+
+| Servicio | Endpoint | Uso |
+|----------|----------|-----|
+| Web | `GET /api/health` | Health check del frontend/API de Next.js |
+| Web | `POST /api/chat` | Chat RAG con streaming SSE, requiere usuario autenticado |
+| Worker | `GET /health` | Health check para local/Railway |
+| Worker | `POST /ingest` | Webhook Supabase para videos nuevos, requiere `X-Worker-Secret` |
+| Worker | `POST /ingest/{video_id}` | Ingesta manual de un video, requiere `X-Worker-Secret` |
 
 ## Deploy
 
@@ -100,15 +119,15 @@ En Supabase Dashboard → Database → Webhooks:
 2. **Videos**: sube videos en bulk (drag & drop). El worker los procesa automáticamente
 3. **Chat**: pregunta sobre tu estrategia o adjunta capturas de operaciones
 
-## Modelos IA
+## Modelos IA (todo vía OpenRouter)
 
-| Uso | Modelo |
-|-----|--------|
-| Análisis de video | `gemini-2.5-flash` |
-| Chat + visión | `gemini-2.5-flash` |
-| Embeddings RAG | `text-embedding-004` |
+| Uso | Modelo | Endpoint |
+|-----|--------|----------|
+| Análisis de video (worker) | `google/gemini-3.1-flash-lite` | `/chat/completions` + `video_url` |
+| Chat + capturas (web) | `google/gemini-3.1-flash-lite` | `/chat/completions` + `image_url` |
+| Embeddings RAG (index + query) | `openai/text-embedding-3-small` @ 768d | `/embeddings` |
 
-La capa de abstracción en `web/src/lib/gemini.ts` permite cambiar a Claude u otro modelo.
+Solo necesitas `OPENROUTER_API_KEY`. El modelo multimodal recibe video/imagen; el modelo de embeddings es independiente y optimizado para retrieval (`search_document` al indexar, `search_query` al buscar).
 
 ## RAG
 

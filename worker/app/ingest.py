@@ -6,25 +6,21 @@ from pathlib import Path
 from supabase import create_client
 
 from app.config import settings
-from app.gemini_client import (
-    analyze_video,
-    embed_text,
-    merge_strategy_profile,
-    upload_video_to_gemini,
-)
-
-supabase = create_client(settings.supabase_url, settings.supabase_service_role_key)
+from app.openrouter_client import analyze_video, embed_text, merge_strategy_profile
 
 
-def update_video_status(video_id: str, status: str, error: str | None = None, gemini_file_uri: str | None = None):
-    data = {"status": status, "error": error}
-    if gemini_file_uri:
-        data["gemini_file_uri"] = gemini_file_uri
-    supabase.table("videos").update(data).eq("id", video_id).execute()
+def get_supabase():
+    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+
+
+def update_video_status(video_id: str, status: str, error: str | None = None):
+    supabase = get_supabase()
+    supabase.table("videos").update({"status": status, "error": error}).eq("id", video_id).execute()
 
 
 def process_video(video_id: str):
     """Full ingestion pipeline for a single video."""
+    supabase = get_supabase()
     try:
         update_video_status(video_id, "processing")
 
@@ -40,7 +36,6 @@ def process_video(video_id: str):
         supabase.table("chunks").delete().eq("video_id", video_id).execute()
         supabase.table("video_analyses").delete().eq("video_id", video_id).execute()
 
-        # Download from Supabase Storage
         file_data = supabase.storage.from_("trading-videos").download(storage_path)
 
         suffix = Path(video["filename"]).suffix or ".mp4"
@@ -52,16 +47,14 @@ def process_video(video_id: str):
             mime_map = {
                 ".mp4": "video/mp4",
                 ".webm": "video/webm",
-                ".mov": "video/quicktime",
-                ".avi": "video/x-msvideo",
+                ".mov": "video/mov",
+                ".avi": "video/mp4",
                 ".mpeg": "video/mpeg",
             }
             mime_type = mime_map.get(suffix.lower(), "video/mp4")
 
-            gemini_file = upload_video_to_gemini(tmp_path, mime_type)
-            analysis = analyze_video(gemini_file)
+            analysis = analyze_video(tmp_path, mime_type)
 
-            # Store analysis
             supabase.table("video_analyses").insert({
                 "video_id": video_id,
                 "user_id": user_id,
@@ -69,7 +62,6 @@ def process_video(video_id: str):
                 "structured_json": analysis,
             }).execute()
 
-            # Create chunks from segments
             segments = analysis.get("segments", [])
             if not segments:
                 strategy = analysis.get("strategy", {})
@@ -103,7 +95,6 @@ def process_video(video_id: str):
                     "embedding": embedding,
                 }).execute()
 
-            # Update strategy profile
             profile_resp = supabase.table("strategy_profiles").select("summary_md").eq("user_id", user_id).maybe_single().execute()
             existing_summary = profile_resp.data["summary_md"] if profile_resp and profile_resp.data else ""
             new_summary = merge_strategy_profile(existing_summary, analysis)
@@ -113,7 +104,7 @@ def process_video(video_id: str):
                 "summary_md": new_summary,
             }).execute()
 
-            update_video_status(video_id, "processed", gemini_file_uri=gemini_file.uri)
+            update_video_status(video_id, "processed")
 
         finally:
             os.unlink(tmp_path)
@@ -125,6 +116,7 @@ def process_video(video_id: str):
 
 def poll_pending_videos():
     """Fallback: process any pending videos."""
+    supabase = get_supabase()
     resp = supabase.table("videos").select("id").eq("status", "pending").limit(5).execute()
     for row in resp.data or []:
         try:
