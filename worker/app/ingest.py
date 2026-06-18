@@ -6,7 +6,12 @@ from pathlib import Path
 from supabase import create_client
 
 from app.config import settings
-from app.openrouter_client import analyze_video, embed_text, merge_strategy_profile
+from app.openrouter_client import (
+    analyze_video,
+    analyze_youtube_video,
+    embed_text,
+    merge_strategy_profile,
+)
 
 
 def get_supabase():
@@ -30,84 +35,97 @@ def process_video(video_id: str):
             raise ValueError(f"Video {video_id} not found")
 
         user_id = video["user_id"]
-        storage_path = video["storage_path"]
+        youtube_url = video.get("youtube_url")
+        storage_path = video.get("storage_path")
 
         # Clean up any data from previous (failed) runs to stay idempotent
         supabase.table("chunks").delete().eq("video_id", video_id).execute()
         supabase.table("video_analyses").delete().eq("video_id", video_id).execute()
 
-        file_data = supabase.storage.from_("trading-videos").download(storage_path)
+        if youtube_url:
+            analysis = analyze_youtube_video(youtube_url)
+        elif storage_path:
+            file_data = supabase.storage.from_("trading-videos").download(storage_path)
 
-        suffix = Path(video["filename"]).suffix or ".mp4"
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(file_data)
-            tmp_path = tmp.name
+            suffix = Path(video["filename"]).suffix or ".mp4"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(file_data)
+                tmp_path = tmp.name
 
-        try:
-            mime_map = {
-                ".mp4": "video/mp4",
-                ".webm": "video/webm",
-                ".mov": "video/mov",
-                ".avi": "video/mp4",
-                ".mpeg": "video/mpeg",
-            }
-            mime_type = mime_map.get(suffix.lower(), "video/mp4")
+            try:
+                mime_map = {
+                    ".mp4": "video/mp4",
+                    ".webm": "video/webm",
+                    ".mov": "video/mov",
+                    ".avi": "video/mp4",
+                    ".mpeg": "video/mpeg",
+                }
+                mime_type = mime_map.get(suffix.lower(), "video/mp4")
 
-            analysis = analyze_video(tmp_path, mime_type)
+                analysis = analyze_video(tmp_path, mime_type)
+            finally:
+                os.unlink(tmp_path)
+        else:
+            raise ValueError("Video has no storage_path or youtube_url")
 
-            supabase.table("video_analyses").insert({
+        supabase.table("video_analyses").insert({
+            "video_id": video_id,
+            "user_id": user_id,
+            "transcript": analysis.get("transcript", ""),
+            "structured_json": analysis,
+        }).execute()
+
+        segments = analysis.get("segments", [])
+        if not segments:
+            strategy = analysis.get("strategy", {})
+            segments = [{
+                "topic": "Estrategia completa",
+                "ts_start": 0,
+                "ts_end": None,
+                "content": json.dumps(strategy, ensure_ascii=False),
+                "rules": strategy.get("entry_rules", []) + strategy.get("exit_rules", []),
+            }]
+
+        chunk_metadata_base = {
+            "filename": video["filename"],
+        }
+        if youtube_url:
+            chunk_metadata_base["youtube_url"] = youtube_url
+            if video.get("youtube_video_id"):
+                chunk_metadata_base["youtube_video_id"] = video["youtube_video_id"]
+
+        for segment in segments:
+            content = f"Tema: {segment.get('topic', 'General')}\n{segment.get('content', '')}"
+            rules = segment.get("rules", [])
+            if rules:
+                content += "\nReglas: " + "; ".join(rules)
+
+            embedding = embed_text(content)
+
+            supabase.table("chunks").insert({
                 "video_id": video_id,
                 "user_id": user_id,
-                "transcript": analysis.get("transcript", ""),
-                "structured_json": analysis,
+                "content": content,
+                "metadata": {
+                    **chunk_metadata_base,
+                    "topic": segment.get("topic"),
+                    "rules": rules,
+                },
+                "ts_start": segment.get("ts_start"),
+                "ts_end": segment.get("ts_end"),
+                "embedding": embedding,
             }).execute()
 
-            segments = analysis.get("segments", [])
-            if not segments:
-                strategy = analysis.get("strategy", {})
-                segments = [{
-                    "topic": "Estrategia completa",
-                    "ts_start": 0,
-                    "ts_end": None,
-                    "content": json.dumps(strategy, ensure_ascii=False),
-                    "rules": strategy.get("entry_rules", []) + strategy.get("exit_rules", []),
-                }]
+        profile_resp = supabase.table("strategy_profiles").select("summary_md").eq("user_id", user_id).maybe_single().execute()
+        existing_summary = profile_resp.data["summary_md"] if profile_resp and profile_resp.data else ""
+        new_summary = merge_strategy_profile(existing_summary, analysis)
 
-            for segment in segments:
-                content = f"Tema: {segment.get('topic', 'General')}\n{segment.get('content', '')}"
-                rules = segment.get("rules", [])
-                if rules:
-                    content += "\nReglas: " + "; ".join(rules)
+        supabase.table("strategy_profiles").upsert({
+            "user_id": user_id,
+            "summary_md": new_summary,
+        }).execute()
 
-                embedding = embed_text(content)
-
-                supabase.table("chunks").insert({
-                    "video_id": video_id,
-                    "user_id": user_id,
-                    "content": content,
-                    "metadata": {
-                        "topic": segment.get("topic"),
-                        "filename": video["filename"],
-                        "rules": rules,
-                    },
-                    "ts_start": segment.get("ts_start"),
-                    "ts_end": segment.get("ts_end"),
-                    "embedding": embedding,
-                }).execute()
-
-            profile_resp = supabase.table("strategy_profiles").select("summary_md").eq("user_id", user_id).maybe_single().execute()
-            existing_summary = profile_resp.data["summary_md"] if profile_resp and profile_resp.data else ""
-            new_summary = merge_strategy_profile(existing_summary, analysis)
-
-            supabase.table("strategy_profiles").upsert({
-                "user_id": user_id,
-                "summary_md": new_summary,
-            }).execute()
-
-            update_video_status(video_id, "processed")
-
-        finally:
-            os.unlink(tmp_path)
+        update_video_status(video_id, "processed")
 
     except Exception as e:
         update_video_status(video_id, "error", error=str(e))

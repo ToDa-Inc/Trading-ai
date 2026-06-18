@@ -11,14 +11,17 @@ create extension if not exists vector with schema extensions;
 create table if not exists public.videos (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  storage_path text not null,
+  storage_path text,
   filename text not null,
   duration_seconds numeric,
   status text not null default 'pending' check (status in ('pending', 'processing', 'processed', 'error')),
   error text,
   gemini_file_uri text,
+  youtube_url text,
+  youtube_video_id text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint videos_source_check check (storage_path is not null or youtube_url is not null)
 );
 
 create table if not exists public.video_analyses (

@@ -5,3 +5,4 @@ supabase==2.11.0
 httpx==0.28.1
 pydantic==2.10.4
 pydantic-settings==2.7.1
+json-repair==0.39.1

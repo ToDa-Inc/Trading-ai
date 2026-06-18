@@ -1,11 +1,35 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { RefreshCw, Trash2 } from "lucide-react";
+import Image from "next/image";
+import { ExternalLink, FileVideo, PlayCircle, RefreshCw, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { youtubeThumbnailUrl } from "@/lib/youtube";
 import type { Video } from "@/types/database";
+
+function VideoThumbnail({ video }: { video: Video }) {
+  if (video.youtube_video_id) {
+    return (
+      <div className="relative h-10 w-16 shrink-0 overflow-hidden rounded bg-zinc-800">
+        <Image
+          src={youtubeThumbnailUrl(video.youtube_video_id)}
+          alt=""
+          fill
+          className="object-cover"
+          unoptimized
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-zinc-800">
+      <FileVideo className="h-5 w-5 text-zinc-500" />
+    </div>
+  );
+}
 
 export function VideoList() {
   const [videos, setVideos] = useState<Video[]>([]);
@@ -59,7 +83,9 @@ export function VideoList() {
   const deleteVideo = async (video: Video) => {
     if (!confirm(`¿Eliminar "${video.filename}"?`)) return;
     const supabase = createClient();
-    await supabase.storage.from("trading-videos").remove([video.storage_path]);
+    if (video.storage_path) {
+      await supabase.storage.from("trading-videos").remove([video.storage_path]);
+    }
     await supabase.from("videos").delete().eq("id", video.id);
     fetchVideos();
   };
@@ -71,8 +97,10 @@ export function VideoList() {
   if (videos.length === 0) {
     return (
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 py-12 text-center">
-        <p className="text-zinc-400">No hay videos subidos aún.</p>
-        <p className="mt-1 text-sm text-zinc-500">Sube tus videos de estrategia para empezar.</p>
+        <p className="text-zinc-400">No hay videos aún.</p>
+        <p className="mt-1 text-sm text-zinc-500">
+          Sube archivos o añade URLs de YouTube para empezar.
+        </p>
       </div>
     );
   }
@@ -93,7 +121,7 @@ export function VideoList() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-800 bg-zinc-900/80 text-left text-zinc-400">
-              <th className="px-4 py-3 font-medium">Archivo</th>
+              <th className="px-4 py-3 font-medium">Video</th>
               <th className="px-4 py-3 font-medium">Estado</th>
               <th className="px-4 py-3 font-medium">Fecha</th>
               <th className="px-4 py-3 font-medium w-16"></th>
@@ -103,10 +131,31 @@ export function VideoList() {
             {videos.map((video) => (
               <tr key={video.id} className="border-b border-zinc-800/50 hover:bg-zinc-900/50">
                 <td className="px-4 py-3">
-                  <p className="font-medium text-zinc-200">{video.filename}</p>
-                  {video.error && (
-                    <p className="mt-1 text-xs text-red-400">{video.error}</p>
-                  )}
+                  <div className="flex items-center gap-3">
+                    <VideoThumbnail video={video} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        {video.youtube_url && (
+                          <PlayCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />
+                        )}
+                        <p className="truncate font-medium text-zinc-200">{video.filename}</p>
+                      </div>
+                      {video.youtube_url && (
+                        <a
+                          href={video.youtube_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-0.5 flex items-center gap-1 truncate text-xs text-zinc-500 hover:text-emerald-400"
+                        >
+                          Ver en YouTube
+                          <ExternalLink className="h-3 w-3 shrink-0" />
+                        </a>
+                      )}
+                      {video.error && (
+                        <p className="mt-1 text-xs text-red-400">{video.error}</p>
+                      )}
+                    </div>
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={video.status} />

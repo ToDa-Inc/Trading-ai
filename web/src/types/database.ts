@@ -3,12 +3,14 @@ export type VideoStatus = "pending" | "processing" | "processed" | "error";
 export interface Video {
   id: string;
   user_id: string;
-  storage_path: string;
+  storage_path: string | null;
   filename: string;
   duration_seconds: number | null;
   status: VideoStatus;
   error: string | null;
   gemini_file_uri: string | null;
+  youtube_url: string | null;
+  youtube_video_id: string | null;
   created_at: string;
   updated_at: string;
 }

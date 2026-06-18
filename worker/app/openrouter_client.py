@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import httpx
+from json_repair import repair_json
 
 from app.config import settings
 
@@ -59,11 +60,30 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _parse_json_response(text: str) -> dict:
+def _extract_json_blob(text: str) -> str:
     cleaned = text.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    return json.loads(cleaned)
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].lstrip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end > start:
+        cleaned = cleaned[start : end + 1]
+
+    return cleaned
+
+
+def _parse_json_response(text: str) -> dict:
+    cleaned = _extract_json_blob(text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        repaired = repair_json(cleaned, return_objects=True)
+        if isinstance(repaired, dict):
+            return repaired
+        raise
 
 
 def _video_data_url(file_path: str, mime_type: str) -> str:
@@ -72,33 +92,100 @@ def _video_data_url(file_path: str, mime_type: str) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def analyze_video(file_path: str, mime_type: str = "video/mp4") -> dict:
-    """Analyze a local video via OpenRouter multimodal chat."""
-    video_url = _video_data_url(file_path, mime_type)
+VIDEO_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "transcript": {"type": "string"},
+        "strategy": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "entry_rules": {"type": "array", "items": {"type": "string"}},
+                "exit_rules": {"type": "array", "items": {"type": "string"}},
+                "risk_management": {"type": "array", "items": {"type": "string"}},
+                "indicators": {"type": "array", "items": {"type": "string"}},
+                "timeframes": {"type": "array", "items": {"type": "string"}},
+                "patterns": {"type": "array", "items": {"type": "string"}},
+                "do_not_trade": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "ts_start": {"type": "number"},
+                    "ts_end": {"type": ["number", "null"]},
+                    "content": {"type": "string"},
+                    "rules": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["topic", "content"],
+            },
+        },
+    },
+    "required": ["transcript", "strategy", "segments"],
+}
 
+
+def _video_analysis_request_body(video_url: str, *, force_ai_studio: bool = False) -> dict:
+    body: dict = {
+        "model": settings.openrouter_video_model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video_url", "video_url": {"url": video_url}},
+                    {"type": "text", "text": ANALYSIS_PROMPT},
+                ],
+            }
+        ],
+        "temperature": 0.2,
+        "max_tokens": 16384,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "video_analysis",
+                "strict": False,
+                "schema": VIDEO_ANALYSIS_SCHEMA,
+            },
+        },
+        "plugins": [{"id": "response-healing"}],
+    }
+    if force_ai_studio:
+        body["provider"] = {"only": ["google-ai-studio"]}
+    return body
+
+
+def _run_video_analysis(request_body: dict) -> dict:
     with httpx.Client(timeout=600.0) as client:
         response = client.post(
             f"{settings.openrouter_base_url}/chat/completions",
             headers=_headers(),
-            json={
-                "model": settings.openrouter_video_model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "video_url", "video_url": {"url": video_url}},
-                            {"type": "text", "text": ANALYSIS_PROMPT},
-                        ],
-                    }
-                ],
-                "temperature": 0.2,
-            },
+            json=request_body,
         )
         response.raise_for_status()
         payload = response.json()
 
     text = payload["choices"][0]["message"]["content"]
+    if not text:
+        raise ValueError("OpenRouter returned empty video analysis content")
+
     return _parse_json_response(text)
+
+
+def analyze_video(file_path: str, mime_type: str = "video/mp4") -> dict:
+    """Analyze a local video via OpenRouter multimodal chat (base64 data URL)."""
+    video_url = _video_data_url(file_path, mime_type)
+    return _run_video_analysis(_video_analysis_request_body(video_url))
+
+
+def analyze_youtube_video(youtube_url: str) -> dict:
+    """Analyze a public YouTube video via OpenRouter (requires Google AI Studio)."""
+    return _run_video_analysis(
+        _video_analysis_request_body(youtube_url, force_ai_studio=True)
+    )
 
 
 def embed_text(text: str) -> list[float]:
