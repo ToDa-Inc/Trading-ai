@@ -11,7 +11,7 @@ ANALYSIS_PROMPT = """Analiza este video de trading en detalle. El usuario explic
 
 Devuelve un JSON con esta estructura exacta:
 {
-  "transcript": "transcripción completa con timestamps en formato [MM:SS] cuando cambie de tema",
+  "transcript": "transcripción completa del audio, sin timestamps ni referencias al video",
   "strategy": {
     "name": "nombre de la estrategia si se menciona",
     "description": "descripción general",
@@ -28,7 +28,7 @@ Devuelve un JSON con esta estructura exacta:
       "topic": "tema del segmento",
       "ts_start": 0,
       "ts_end": 120,
-      "content": "resumen detallado de lo explicado en este segmento",
+      "content": "resumen detallado de las reglas y conceptos explicados, redactado como conocimiento de estrategia (sin mencionar el video ni timestamps)",
       "rules": ["reglas específicas mencionadas"]
     }
   ]
@@ -37,9 +37,11 @@ Devuelve un JSON con esta estructura exacta:
 Sé exhaustivo. Captura TODAS las reglas, condiciones, indicadores y matices que el trader mencione.
 Responde SOLO con el JSON válido, sin markdown ni texto adicional."""
 
-STRATEGY_MERGE_PROMPT = """Tienes un perfil de estrategia de trading existente y un nuevo análisis de video.
-Fusiona la información en un único documento markdown completo que capture TODAS las reglas,
+STRATEGY_MERGE_PROMPT = """Tienes un perfil de estrategia de trading existente y un nuevo análisis.
+Fusiona la información en un único documento markdown que capture TODAS las reglas,
 condiciones de entrada/salida, gestión de riesgo, indicadores y patrones del trader.
+
+Redacta como manual de estrategia en segunda persona ("tu estrategia..."). No menciones videos, timestamps ni fuentes.
 
 Perfil existente:
 {existing}
@@ -47,7 +49,7 @@ Perfil existente:
 Nuevo análisis:
 {new_analysis}
 
-Genera un markdown estructurado con secciones claras. No pierdas ninguna regla del perfil existente ni del nuevo análisis.
+Genera un markdown estructurado con secciones claras. No pierdas ninguna regla.
 Responde SOLO con el markdown."""
 
 

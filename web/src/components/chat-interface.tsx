@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { Send, ImagePlus, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
+import { MessageContent } from "@/components/message-content";
+import { ChatMessageImage } from "@/components/chat-message-image";
 import type { ChatMessage } from "@/types/database";
 
 interface ChatInterfaceProps {
@@ -11,8 +13,10 @@ interface ChatInterfaceProps {
   onSessionCreated: (id: string) => void;
 }
 
+type DisplayMessage = ChatMessage & { localImageUrl?: string | null };
+
 export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -32,7 +36,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
       .select("*")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: true })
-      .then(({ data }) => setMessages((data as ChatMessage[]) || []));
+      .then(({ data }) => setMessages((data as DisplayMessage[]) || []));
   }, [sessionId]);
 
   useEffect(() => {
@@ -51,19 +55,23 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
     setIsLoading(true);
     setStreamingText("");
 
+    const previewForMessage = imagePreview;
+    const userContent = input.trim() || "Evalúa esta operación según mi estrategia.";
+
     try {
       const formData = new FormData();
-      formData.append("message", input.trim() || "Evalúa esta operación según mi estrategia.");
+      formData.append("message", userContent);
       if (sessionId) formData.append("sessionId", sessionId);
       if (image) formData.append("image", image);
 
-      const userMsg: ChatMessage = {
+      const userMsg: DisplayMessage = {
         id: crypto.randomUUID(),
         session_id: sessionId || "",
         user_id: "",
         role: "user",
-        content: input.trim() || "[Captura adjunta]",
+        content: userContent,
         image_path: image ? "pending" : null,
+        localImageUrl: previewForMessage,
         citations: [],
         created_at: new Date().toISOString(),
       };
@@ -86,7 +94,6 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
       const decoder = new TextDecoder();
       let fullText = "";
       let newSessionId = sessionId;
-      let citations: ChatMessage["citations"] = [];
 
       if (reader) {
         while (true) {
@@ -103,8 +110,6 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
             } else if (data.type === "token") {
               fullText += data.text;
               setStreamingText(fullText);
-            } else if (data.type === "done") {
-              citations = data.citations || [];
             } else if (data.type === "error") {
               throw new Error(data.error);
             }
@@ -112,19 +117,29 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
         }
       }
 
-      const assistantMsg: ChatMessage = {
+      const assistantMsg: DisplayMessage = {
         id: crypto.randomUUID(),
         session_id: newSessionId || "",
         user_id: "",
         role: "assistant",
         content: fullText,
         image_path: null,
-        citations,
+        citations: [],
         created_at: new Date().toISOString(),
       };
 
       setStreamingText("");
       setMessages((prev) => [...prev, assistantMsg]);
+
+      if (newSessionId) {
+        const supabase = createClient();
+        const { data } = await supabase
+          .from("chat_messages")
+          .select("*")
+          .eq("session_id", newSessionId)
+          .order("created_at", { ascending: true });
+        if (data) setMessages(data as DisplayMessage[]);
+      }
     } catch (err) {
       setMessages((prev) => [
         ...prev,
@@ -158,31 +173,31 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
           </div>
         )}
 
-        <div className="mx-auto max-w-3xl space-y-6">
+        <div className="mx-auto max-w-3xl space-y-5">
           {messages.map((msg) => (
             <div
               key={msg.id}
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                className={`max-w-[88%] rounded-2xl px-4 py-3 ${
                   msg.role === "user"
-                    ? "bg-emerald-600/20 text-zinc-100"
-                    : "bg-zinc-800/80 text-zinc-200"
+                    ? "bg-emerald-600/15 ring-1 ring-emerald-500/20"
+                    : "bg-zinc-800/90 ring-1 ring-zinc-700/50"
                 }`}
               >
-                <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
-                {msg.citations && msg.citations.length > 0 && (
-                  <div className="mt-2 border-t border-zinc-700/50 pt-2">
-                    <p className="text-xs text-zinc-500">Referencias:</p>
-                    {msg.citations.map((c, i) => (
-                      <p key={i} className="text-xs text-emerald-400/80">
-                        Video {c.video_id.slice(0, 8)}...
-                        {c.ts_start != null && ` @ ${Math.floor(c.ts_start / 60)}:${String(Math.floor(c.ts_start % 60)).padStart(2, "0")}`}
-                        {c.topic && ` — ${c.topic}`}
-                      </p>
-                    ))}
-                  </div>
+                {(msg.image_path || msg.localImageUrl) && (
+                  <ChatMessageImage
+                    storagePath={msg.image_path || ""}
+                    localUrl={msg.localImageUrl}
+                  />
+                )}
+                {msg.role === "assistant" ? (
+                  <MessageContent content={msg.content} />
+                ) : (
+                  msg.content && msg.content !== "Evalúa esta operación según mi estrategia." && (
+                    <p className="text-sm leading-relaxed text-zinc-100">{msg.content}</p>
+                  )
                 )}
               </div>
             </div>
@@ -190,11 +205,9 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
 
           {streamingText && (
             <div className="flex justify-start">
-              <div className="max-w-[85%] rounded-2xl bg-zinc-800/80 px-4 py-3">
-                <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-200">
-                  {streamingText}
-                  <span className="inline-block h-4 w-1 animate-pulse bg-emerald-400" />
-                </p>
+              <div className="max-w-[88%] rounded-2xl bg-zinc-800/90 px-4 py-3 ring-1 ring-zinc-700/50">
+                <MessageContent content={streamingText} />
+                <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-emerald-400" />
               </div>
             </div>
           )}
@@ -207,9 +220,16 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
           {imagePreview && (
             <div className="mb-3 relative inline-block">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imagePreview} alt="Preview" className="h-20 rounded-lg border border-zinc-700" />
+              <img
+                src={imagePreview}
+                alt="Vista previa"
+                className="max-h-28 rounded-lg border border-zinc-700 object-contain"
+              />
               <button
-                onClick={() => { setImage(null); setImagePreview(null); }}
+                onClick={() => {
+                  setImage(null);
+                  setImagePreview(null);
+                }}
                 className="absolute -right-2 -top-2 rounded-full bg-zinc-800 p-1 text-zinc-400 hover:text-zinc-200"
               >
                 ×

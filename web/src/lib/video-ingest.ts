@@ -14,7 +14,7 @@ const ANALYSIS_PROMPT = `Analiza este video de trading en detalle. El usuario ex
 
 Devuelve un JSON con esta estructura exacta:
 {
-  "transcript": "transcripción completa con timestamps en formato [MM:SS] cuando cambie de tema",
+  "transcript": "transcripción completa del audio, sin timestamps ni referencias al video",
   "strategy": {
     "name": "nombre de la estrategia si se menciona",
     "description": "descripción general",
@@ -31,7 +31,7 @@ Devuelve un JSON con esta estructura exacta:
       "topic": "tema del segmento",
       "ts_start": 0,
       "ts_end": 120,
-      "content": "resumen detallado de lo explicado en este segmento",
+      "content": "resumen detallado de las reglas y conceptos explicados, redactado como conocimiento de estrategia (sin mencionar el video ni timestamps)",
       "rules": ["reglas específicas mencionadas"]
     }
   ]
@@ -210,6 +210,8 @@ async function mergeStrategyProfile(
 Fusiona la información en un único documento markdown completo que capture TODAS las reglas,
 condiciones de entrada/salida, gestión de riesgo, indicadores y patrones del trader.
 
+Redacta como manual de estrategia en segunda persona ("tu estrategia..."). No menciones videos, timestamps ni fuentes.
+
 Perfil existente:
 ${existing || "Ninguno (primer video)"}
 
@@ -312,7 +314,11 @@ export async function processYoutubeVideo(
   }
 
   for (const segment of segments) {
-    let content = `Tema: ${segment.topic ?? "General"}\n${segment.content ?? ""}`;
+    const topic = segment.topic ?? "General";
+    let content = segment.content ?? "";
+    if (topic && !content.startsWith(topic)) {
+      content = `${topic}\n${content}`;
+    }
     const rules = segment.rules ?? [];
     if (rules.length > 0) {
       content += `\nReglas: ${rules.join("; ")}`;

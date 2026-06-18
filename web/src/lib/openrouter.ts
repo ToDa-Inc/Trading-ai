@@ -54,55 +54,50 @@ export interface ChatContext {
   imageMimeType?: string;
 }
 
-const SYSTEM_PROMPT = `Eres un asistente experto en trading que ayuda al usuario a evaluar operaciones según SU estrategia personal.
+const SYSTEM_PROMPT = `Eres un asistente experto en trading que ayuda al usuario según SU estrategia personal.
 
 REGLAS ESTRICTAS:
-1. Responde ÚNICAMENTE basándote en el perfil de estrategia y los fragmentos de video proporcionados.
-2. Si la información no está en el contexto, di claramente "No tengo información sobre esto en tus videos".
-3. Nunca inventes reglas ni recomendaciones que el usuario no haya explicado.
-4. Cuando evalúes una operación (texto o captura), indica:
-   - Nivel de recomendación: Alta / Media / Baja / No recomendada
-   - Reglas que cumple y las que viola
-   - Citas a videos con timestamps cuando sea posible
-5. Responde en español, de forma clara y directa.`;
+1. Responde ÚNICAMENTE con el conocimiento del perfil de estrategia y los fragmentos proporcionados.
+2. Si la información no está en el contexto, di claramente "No tengo esa información en tu estrategia".
+3. Nunca inventes reglas ni recomendaciones que el usuario no haya definido.
+4. Presenta el conocimiento como reglas y criterios del propio usuario ("tu estrategia indica...", "según tus criterios...").
+5. NUNCA menciones videos, timestamps, minutos, segundos, fragmentos, fuentes ni referencias a dónde se explicó algo.
+6. Cuando evalúes una operación (texto o captura), estructura la respuesta así:
+   - **Recomendación:** Alta / Media / Baja / No recomendada
+   - **Criterios que cumple:** lista breve
+   - **Criterios que viola:** lista breve
+   - **Observaciones:** matices relevantes
+7. Usa markdown ligero: **negritas** para etiquetas, listas con guiones, párrafos separados.
+8. Responde en español, claro y directo.`;
 
 type OpenRouterContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } };
 
-function buildPrompt(userMessage: string, context: ChatContext, detailed = true) {
-  const chunksText = context.chunks
+function buildPrompt(userMessage: string, context: ChatContext) {
+  const knowledgeText = context.chunks
     .map((c, i) => {
-      const relevance = detailed
-        ? `, relevancia: ${(c.similarity * 100).toFixed(0)}%`
-        : "";
-      return `[Fragmento ${i + 1}] (video: ${c.metadata?.filename || c.video_id}, ${c.ts_start != null ? `t=${c.ts_start}s` : ""}${relevance})\n${c.content}`;
+      const topic = (c.metadata?.topic as string) || `Área ${i + 1}`;
+      return `### ${topic}\n${c.content}`;
     })
     .join("\n\n");
 
-  const profileFallback = detailed
-    ? "Aún no hay perfil de estrategia. El usuario no ha subido videos procesados."
-    : "Aún no hay perfil de estrategia.";
-
-  const chunksFallback = detailed ? "No hay fragmentos relevantes." : "No hay fragmentos.";
-
   return `## Perfil de estrategia del usuario
-${context.strategyProfile || profileFallback}
+${context.strategyProfile || "Aún no hay perfil de estrategia definido."}
 
-## Fragmentos relevantes${detailed ? " de los videos" : ""}
-${chunksText || chunksFallback}
+## Conocimiento relevante de la estrategia
+${knowledgeText || "No hay conocimiento adicional relevante para esta consulta."}
 
-## Pregunta${detailed ? " del usuario" : ""}
+## Consulta del usuario
 ${userMessage}`;
 }
 
 function buildUserContent(
   userMessage: string,
-  context: ChatContext,
-  detailed = true
+  context: ChatContext
 ): OpenRouterContentPart[] {
   const content: OpenRouterContentPart[] = [
-    { type: "text", text: buildPrompt(userMessage, context, detailed) },
+    { type: "text", text: buildPrompt(userMessage, context) },
   ];
 
   if (context.imageBase64 && context.imageMimeType) {
@@ -112,12 +107,10 @@ function buildUserContent(
         url: `data:${context.imageMimeType};base64,${context.imageBase64}`,
       },
     });
-    if (detailed) {
-      content.push({
-        type: "text",
-        text: "\n[El usuario ha adjuntado una captura de pantalla de una operación o del mercado. Evalúala según su estrategia.]",
-      });
-    }
+    content.push({
+      type: "text",
+      text: "\n[El usuario ha adjuntado una captura de pantalla de una operación o del mercado. Evalúala según su estrategia.]",
+    });
   }
 
   return content;
@@ -213,16 +206,7 @@ export async function generateChatResponse(
   };
   const text = result.choices?.[0]?.message?.content ?? "";
 
-  const citations = context.chunks
-    .filter((c) => c.similarity > 0.5)
-    .slice(0, 5)
-    .map((c) => ({
-      video_id: c.video_id,
-      ts_start: c.ts_start ?? undefined,
-      topic: (c.metadata?.topic as string) || undefined,
-    }));
-
-  return { text, citations };
+  return { text, citations: [] };
 }
 
 export async function* streamChatResponse(
@@ -236,7 +220,7 @@ export async function* streamChatResponse(
       model: CHAT_MODEL,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserContent(userMessage, context, false) },
+        { role: "user", content: buildUserContent(userMessage, context) },
       ],
       stream: true,
     }),

@@ -120,25 +120,15 @@ export async function POST(request: NextRequest) {
           send({ type: "token", text: token });
         }
 
-        type ChunkCtx = (typeof context.chunks)[number];
-        const citations = context.chunks
-          .filter((c: ChunkCtx) => c.similarity > 0.5)
-          .slice(0, 5)
-          .map((c: ChunkCtx) => ({
-            video_id: c.video_id,
-            ts_start: c.ts_start ?? undefined,
-            topic: (c.metadata?.topic as string) || undefined,
-          }));
-
         await serviceClient.from("chat_messages").insert({
           session_id: sessionId,
           user_id: user.id,
           role: "assistant",
           content: fullText,
-          citations,
+          citations: [],
         });
 
-        send({ type: "done", citations });
+        send({ type: "done" });
       } catch (err) {
         send({ type: "error", error: err instanceof Error ? err.message : "Error desconocido" });
       }

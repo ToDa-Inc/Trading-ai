@@ -124,7 +124,10 @@ def process_video(video_id: str, webhook_record: dict | None = None):
                 chunk_metadata_base["youtube_video_id"] = video["youtube_video_id"]
 
         for segment in segments:
-            content = f"Tema: {segment.get('topic', 'General')}\n{segment.get('content', '')}"
+            content = segment.get("content", "")
+            topic = segment.get("topic", "General")
+            if topic and topic not in content:
+                content = f"{topic}\n{content}"
             rules = segment.get("rules", [])
             if rules:
                 content += "\nReglas: " + "; ".join(rules)
