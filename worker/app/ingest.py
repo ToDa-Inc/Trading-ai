@@ -62,6 +62,8 @@ def process_video(video_id: str, webhook_record: dict | None = None):
         youtube_url = _resolve_youtube_url(video)
         storage_path = _resolve_storage_path(video)
 
+        print(f"[ingest] video_id={video_id} youtube_url={bool(youtube_url)} storage_path={storage_path!r}")
+
         # Clean up any data from previous (failed) runs to stay idempotent
         supabase.table("chunks").delete().eq("video_id", video_id).execute()
         supabase.table("video_analyses").delete().eq("video_id", video_id).execute()

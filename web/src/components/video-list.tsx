@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { ExternalLink, FileVideo, PlayCircle, RefreshCw, Trash2 } from "lucide-react";
+import { ExternalLink, FileVideo, PlayCircle, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { StatusBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,6 +90,17 @@ export function VideoList() {
     fetchVideos();
   };
 
+  const retryVideo = async (video: Video) => {
+    if (!video.youtube_url && !video.youtube_video_id) return;
+    const res = await fetch(`/api/videos/${video.id}/process`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      alert((body as { error?: string }).error || "Error al reintentar");
+      return;
+    }
+    fetchVideos();
+  };
+
   if (loading) {
     return <div className="py-8 text-center text-zinc-500">Cargando videos...</div>;
   }
@@ -169,12 +180,23 @@ export function VideoList() {
                   })}
                 </td>
                 <td className="px-4 py-3">
-                  <button
-                    onClick={() => deleteVideo(video)}
-                    className="text-zinc-500 hover:text-red-400"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {video.status === "error" && video.youtube_url && (
+                      <button
+                        onClick={() => retryVideo(video)}
+                        className="text-zinc-500 hover:text-emerald-400"
+                        title="Reintentar análisis"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => deleteVideo(video)}
+                      className="text-zinc-500 hover:text-red-400"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

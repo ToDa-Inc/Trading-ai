@@ -1,0 +1,68 @@
+import { after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { processYoutubeVideo, resolveYoutubeUrl } from "@/lib/video-ingest";
+
+export const maxDuration = 300;
+
+/** Trigger YouTube video processing from the app (no Railway webhook needed) */
+export async function POST(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: videoId } = await params;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+  }
+
+  const service = await createServiceClient();
+  const { data: video, error } = await service
+    .from("videos")
+    .select("*")
+    .eq("id", videoId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (error || !video) {
+    return NextResponse.json({ error: "Video no encontrado" }, { status: 404 });
+  }
+
+  const youtubeUrl = resolveYoutubeUrl(video);
+  if (!youtubeUrl) {
+    return NextResponse.json(
+      { error: "Solo videos de YouTube se procesan desde la web. Los archivos usan el worker." },
+      { status: 400 }
+    );
+  }
+
+  if (video.status === "processing") {
+    return NextResponse.json({ status: "already_processing" });
+  }
+
+  after(async () => {
+    try {
+      await processYoutubeVideo(service, videoId, video);
+    } catch (err) {
+      console.error(`[ingest] process route failed video_id=${videoId}`, err);
+      await service
+        .from("videos")
+        .update({
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        })
+        .eq("id", videoId);
+    }
+  });
+
+  await service
+    .from("videos")
+    .update({ status: "processing", error: null })
+    .eq("id", videoId);
+
+  return NextResponse.json({ status: "queued", video_id: videoId });
+}

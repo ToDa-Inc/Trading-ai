@@ -95,14 +95,28 @@ export function YoutubeUrlInput({ onAddComplete }: YoutubeUrlInputProps) {
       );
 
       try {
-        const { error } = await supabase.from("videos").insert({
-          user_id: user.id,
-          filename: item.title,
-          youtube_url: item.url,
-          youtube_video_id: item.videoId,
-        });
+        const { data, error } = await supabase
+          .from("videos")
+          .insert({
+            user_id: user.id,
+            filename: item.title,
+            youtube_url: item.url,
+            youtube_video_id: item.videoId,
+          })
+          .select("id")
+          .single();
 
         if (error) throw error;
+
+        const processRes = await fetch(`/api/videos/${data.id}/process`, {
+          method: "POST",
+        });
+        if (!processRes.ok) {
+          const body = await processRes.json().catch(() => ({}));
+          throw new Error(
+            (body as { error?: string }).error || "No se pudo iniciar el análisis"
+          );
+        }
 
         setPending((prev) =>
           prev.map((p) => (p.videoId === item.videoId ? { ...p, status: "done" } : p))

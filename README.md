@@ -36,10 +36,12 @@ NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_VIDEO_MODEL=google/gemini-3.1-flash-lite
 OPENROUTER_CHAT_MODEL=google/gemini-3.1-flash-lite
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 OPENROUTER_EMBEDDING_DIMENSIONS=768
 WORKER_SECRET=tu-secreto-aleatorio
+WORKER_URL=https://tu-worker.railway.app
 ```
 
 **worker/.env** (copia desde `worker/.env.example`)
@@ -84,9 +86,11 @@ npm run dev:worker
 |----------|----------|-----|
 | Web | `GET /api/health` | Health check del frontend/API de Next.js |
 | Web | `POST /api/chat` | Chat RAG con streaming SSE, requiere usuario autenticado |
+| Web | `POST /api/ingest` | Webhook Supabase (YouTube → Vercel; archivos → Railway) |
+| Web | `POST /api/videos/{id}/process` | Reprocesar video YouTube (usuario autenticado) |
 | Worker | `GET /health` | Health check para local/Railway |
-| Worker | `POST /ingest` | Webhook Supabase para videos nuevos, requiere `X-Worker-Secret` |
-| Worker | `POST /ingest/{video_id}` | Ingesta manual de un video, requiere `X-Worker-Secret` |
+| Worker | `POST /ingest` | Webhook legacy — usar `/api/ingest` en Vercel |
+| Worker | `POST /ingest/{video_id}` | Ingesta manual de archivo, requiere `X-Worker-Secret` |
 
 ## Deploy
 
@@ -110,8 +114,10 @@ En Supabase Dashboard → Database → Webhooks:
 - **Name**: video-ingest
 - **Table**: `videos`
 - **Events**: INSERT
-- **URL**: `https://tu-worker.railway.app/ingest`
+- **URL**: `https://tu-app.vercel.app/api/ingest` (recomendado — YouTube se procesa en Vercel)
 - **Headers**: `X-Worker-Secret: tu-secreto-aleatorio`
+
+Los videos de **YouTube** se analizan en Vercel vía OpenRouter. Los **archivos subidos** se reenvían al worker de Railway (`WORKER_URL` en Vercel).
 
 ## Flujo de uso
 
