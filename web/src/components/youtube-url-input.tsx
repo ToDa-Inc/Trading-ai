@@ -97,7 +97,6 @@ export function YoutubeUrlInput({ onAddComplete }: YoutubeUrlInputProps) {
       try {
         const { error } = await supabase.from("videos").insert({
           user_id: user.id,
-          storage_path: null,
           filename: item.title,
           youtube_url: item.url,
           youtube_video_id: item.videoId,

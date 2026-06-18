@@ -74,7 +74,7 @@ async def ingest_webhook(
     if not video_id:
         raise HTTPException(status_code=400, detail="Missing video id")
 
-    background_tasks.add_task(process_video, video_id)
+    background_tasks.add_task(process_video, video_id, payload.record)
     return {"status": "queued", "video_id": video_id}
 
 

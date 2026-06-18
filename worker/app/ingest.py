@@ -23,9 +23,27 @@ def update_video_status(video_id: str, status: str, error: str | None = None):
     supabase.table("videos").update({"status": status, "error": error}).eq("id", video_id).execute()
 
 
-def process_video(video_id: str):
+def _resolve_youtube_url(video: dict) -> str | None:
+    url = (video.get("youtube_url") or "").strip()
+    if url:
+        return url
+    video_id = (video.get("youtube_video_id") or "").strip()
+    if video_id:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    return None
+
+
+def _resolve_storage_path(video: dict) -> str | None:
+    path = (video.get("storage_path") or "").strip()
+    return path or None
+
+
+def process_video(video_id: str, webhook_record: dict | None = None):
     """Full ingestion pipeline for a single video."""
     supabase = get_supabase()
+    video: dict = {}
+    youtube_url: str | None = None
+    storage_path: str | None = None
     try:
         update_video_status(video_id, "processing")
 
@@ -34,9 +52,15 @@ def process_video(video_id: str):
         if not video:
             raise ValueError(f"Video {video_id} not found")
 
+        # Webhook payload can include fields before PostgREST schema cache catches up
+        if webhook_record:
+            for key in ("youtube_url", "youtube_video_id", "storage_path", "filename"):
+                if not video.get(key) and webhook_record.get(key):
+                    video[key] = webhook_record[key]
+
         user_id = video["user_id"]
-        youtube_url = video.get("youtube_url")
-        storage_path = video.get("storage_path")
+        youtube_url = _resolve_youtube_url(video)
+        storage_path = _resolve_storage_path(video)
 
         # Clean up any data from previous (failed) runs to stay idempotent
         supabase.table("chunks").delete().eq("video_id", video_id).execute()
@@ -66,7 +90,10 @@ def process_video(video_id: str):
             finally:
                 os.unlink(tmp_path)
         else:
-            raise ValueError("Video has no storage_path or youtube_url")
+            raise ValueError(
+                "Video has no youtube_url/youtube_video_id and no storage_path. "
+                "If this is a YouTube video, run the youtube_urls migration and reload the schema."
+            )
 
         supabase.table("video_analyses").insert({
             "video_id": video_id,
@@ -128,7 +155,18 @@ def process_video(video_id: str):
         update_video_status(video_id, "processed")
 
     except Exception as e:
-        update_video_status(video_id, "error", error=str(e))
+        error_msg = str(e)
+        if "Object not found" in error_msg and youtube_url:
+            error_msg = (
+                "Storage download failed but this is a YouTube video — "
+                "restart the worker so it uses the YouTube analysis path."
+            )
+        elif "Object not found" in error_msg and storage_path:
+            error_msg = (
+                f"Video file not found in storage at '{storage_path}'. "
+                "Re-upload the file or delete this entry."
+            )
+        update_video_status(video_id, "error", error=error_msg)
         raise
 
 

@@ -13,3 +13,6 @@ alter table public.videos
   );
 
 create index if not exists videos_youtube_video_id_idx on public.videos(youtube_video_id);
+
+-- Refresh PostgREST schema cache so new columns are visible to the API
+notify pgrst, 'reload schema';
