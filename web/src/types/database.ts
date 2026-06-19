@@ -43,3 +43,46 @@ export interface ChunkMatch {
   ts_end: number | null;
   similarity: number;
 }
+
+export type FeedbackRating = "positive" | "negative" | "correction";
+export type FeedbackType =
+  | "correct"
+  | "wrong"
+  | "missed_rule"
+  | "too_generic"
+  | "correction";
+export type MemoryScope = "session" | "global_strategy";
+export type MemoryCandidateStatus = "pending" | "approved" | "dismissed";
+
+export interface ChatFeedback {
+  id: string;
+  user_id: string;
+  session_id: string;
+  message_id: string;
+  rating: FeedbackRating;
+  feedback_type: FeedbackType;
+  comment: string | null;
+  created_at: string;
+}
+
+export interface AgentMemoryCandidate {
+  id: string;
+  user_id: string;
+  session_id: string | null;
+  source_feedback_id: string | null;
+  candidate_text: string;
+  scope: MemoryScope;
+  status: MemoryCandidateStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentMemory {
+  id: string;
+  user_id: string;
+  source_candidate_id: string | null;
+  memory_text: string;
+  scope: "global_strategy";
+  created_at: string;
+  updated_at: string;
+}

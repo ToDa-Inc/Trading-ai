@@ -1,35 +1,37 @@
 import { NextRequest } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { embedQuery, streamChatResponse } from "@/lib/openrouter";
+import { runChatAgent } from "@/lib/chat-agent";
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
   if (!user) {
     return new Response(JSON.stringify({ error: "No autenticado" }), { status: 401 });
   }
 
   const formData = await request.formData();
-  const message = formData.get("message") as string;
+  const message = (formData.get("message") as string) || "";
   let sessionId = formData.get("sessionId") as string | null;
   const imageFile = formData.get("image") as File | null;
 
-  if (!message?.trim() && !imageFile) {
+  if (!message.trim() && !imageFile) {
     return new Response(JSON.stringify({ error: "Mensaje vacío" }), { status: 400 });
   }
 
   const serviceClient = await createServiceClient();
+  const userContent = message.trim() || "Evalúa esta operación según mi estrategia.";
 
-  // Create session if needed
   if (!sessionId) {
     const { data: session, error } = await serviceClient
       .from("chat_sessions")
       .insert({
         user_id: user.id,
-        title: message.slice(0, 50) || "Captura de operación",
+        title: userContent.slice(0, 50) || "Captura de operación",
       })
       .select()
       .single();
@@ -40,7 +42,12 @@ export async function POST(request: NextRequest) {
     sessionId = session.id;
   }
 
-  // Upload image if provided
+  if (!sessionId) {
+    return new Response(JSON.stringify({ error: "No se pudo crear la sesión" }), { status: 500 });
+  }
+
+  const activeSessionId: string = sessionId;
+
   let imageBase64: string | undefined;
   let imageMimeType: string | undefined;
   let imagePath: string | null = null;
@@ -58,30 +65,18 @@ export async function POST(request: NextRequest) {
     imageMimeType = imageFile.type;
   }
 
-  // Save user message
   await serviceClient.from("chat_messages").insert({
-    session_id: sessionId,
+    session_id: activeSessionId,
     user_id: user.id,
     role: "user",
-    content: message,
+    content: userContent,
     image_path: imagePath,
   });
 
-  // RAG retrieval
-  const queryText = message || "evaluación de operación captura de pantalla trading";
-  const queryEmbedding = await embedQuery(queryText);
-
-  const { data: chunks } = await serviceClient.rpc("match_chunks", {
-    query_embedding: queryEmbedding,
-    match_count: 25,
-    filter_user_id: user.id,
-  });
-
-  const { data: profile } = await serviceClient
-    .from("strategy_profiles")
-    .select("summary_md")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  await serviceClient
+    .from("chat_sessions")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", activeSessionId);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -90,47 +85,54 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
 
-      send({ type: "session", sessionId });
+      send({ type: "session", sessionId: activeSessionId });
 
       let fullText = "";
+      let citations: Array<{ video_id: string; ts_start?: number; topic?: string }> = [];
+
       try {
-        const context = {
-          strategyProfile: profile?.summary_md || "",
-          chunks: (chunks || []).map((c: {
-            video_id: string;
-            content: string;
-            metadata: Record<string, unknown>;
-            ts_start: number | null;
-            ts_end: number | null;
-            similarity: number;
-          }) => ({
-            video_id: c.video_id,
-            content: c.content,
-            metadata: c.metadata,
-            ts_start: c.ts_start,
-            ts_end: c.ts_end,
-            similarity: c.similarity,
-          })),
+        for await (const event of runChatAgent({
+          serviceClient,
+          userId: user.id,
+          sessionId: activeSessionId,
+          message: userContent,
           imageBase64,
           imageMimeType,
-        };
+        })) {
+          if (event.type === "status") {
+            send({ type: "status", text: event.text });
+          } else if (event.type === "intent") {
+            send({ type: "intent", intent: event.intent });
+          } else if (event.type === "token") {
+            fullText += event.text;
+            send({ type: "token", text: event.text });
+          } else if (event.type === "metadata") {
+            citations = event.citations;
+            send({ type: "metadata", intent: event.intent, citations: event.citations });
+          } else if (event.type === "done") {
+            await serviceClient.from("chat_messages").insert({
+              session_id: activeSessionId,
+              user_id: user.id,
+              role: "assistant",
+              content: fullText,
+              citations,
+            });
 
-        for await (const token of streamChatResponse(message, context)) {
-          fullText += token;
-          send({ type: "token", text: token });
+            await serviceClient
+              .from("chat_sessions")
+              .update({ updated_at: new Date().toISOString() })
+              .eq("id", activeSessionId);
+
+            send({ type: "done" });
+          } else if (event.type === "error") {
+            send({ type: "error", error: event.error });
+          }
         }
-
-        await serviceClient.from("chat_messages").insert({
-          session_id: sessionId,
-          user_id: user.id,
-          role: "assistant",
-          content: fullText,
-          citations: [],
-        });
-
-        send({ type: "done" });
       } catch (err) {
-        send({ type: "error", error: err instanceof Error ? err.message : "Error desconocido" });
+        send({
+          type: "error",
+          error: err instanceof Error ? err.message : "Error desconocido",
+        });
       }
 
       controller.close();

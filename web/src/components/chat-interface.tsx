@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { MessageContent } from "@/components/message-content";
 import { ChatMessageImage } from "@/components/chat-message-image";
+import { MessageFeedback } from "@/components/message-feedback";
 import type { ChatMessage } from "@/types/database";
 
 interface ChatInterfaceProps {
@@ -22,6 +23,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
+  const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,6 +56,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
     if (!input.trim() && !image) return;
     setIsLoading(true);
     setStreamingText("");
+    setAgentStatus(null);
 
     const previewForMessage = imagePreview;
     const userContent = input.trim() || "Evalúa esta operación según mi estrategia.";
@@ -107,9 +110,12 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
             if (data.type === "session") {
               newSessionId = data.sessionId;
               onSessionCreated(data.sessionId);
+            } else if (data.type === "status") {
+              setAgentStatus(data.text);
             } else if (data.type === "token") {
               fullText += data.text;
               setStreamingText(fullText);
+              setAgentStatus(null);
             } else if (data.type === "error") {
               throw new Error(data.error);
             }
@@ -129,6 +135,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
       };
 
       setStreamingText("");
+      setAgentStatus(null);
       setMessages((prev) => [...prev, assistantMsg]);
 
       if (newSessionId) {
@@ -155,6 +162,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
         },
       ]);
       setStreamingText("");
+      setAgentStatus(null);
     } finally {
       setIsLoading(false);
     }
@@ -180,7 +188,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[88%] rounded-2xl px-4 py-3 ${
+                className={`group max-w-[88%] rounded-2xl px-4 py-3 ${
                   msg.role === "user"
                     ? "bg-emerald-600/15 ring-1 ring-emerald-500/20"
                     : "bg-zinc-800/90 ring-1 ring-zinc-700/50"
@@ -193,7 +201,12 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
                   />
                 )}
                 {msg.role === "assistant" ? (
-                  <MessageContent content={msg.content} />
+                  <>
+                    <MessageContent content={msg.content} />
+                    {sessionId && (
+                      <MessageFeedback messageId={msg.id} sessionId={sessionId} />
+                    )}
+                  </>
                 ) : (
                   msg.content && msg.content !== "Evalúa esta operación según mi estrategia." && (
                     <p className="text-sm leading-relaxed text-zinc-100">{msg.content}</p>
@@ -203,11 +216,19 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
             </div>
           ))}
 
-          {streamingText && (
+          {(agentStatus || streamingText) && (
             <div className="flex justify-start">
               <div className="max-w-[88%] rounded-2xl bg-zinc-800/90 px-4 py-3 ring-1 ring-zinc-700/50">
-                <MessageContent content={streamingText} />
-                <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-emerald-400" />
+                {agentStatus && !streamingText && (
+                  <div className="mb-2 flex items-center gap-2 text-xs text-zinc-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-400" />
+                    <span>{agentStatus}</span>
+                  </div>
+                )}
+                {streamingText && <MessageContent content={streamingText} />}
+                {streamingText && (
+                  <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-emerald-400" />
+                )}
               </div>
             </div>
           )}

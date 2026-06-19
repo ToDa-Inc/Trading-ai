@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { ChatInterface } from "@/components/chat-interface";
+import { MemoryReviewPanel } from "@/components/memory-review-panel";
 import { Button } from "@/components/ui/button";
 import type { ChatSession } from "@/types/database";
 
@@ -74,7 +75,10 @@ export default function ChatPage() {
         </div>
       </aside>
 
-      <div className="flex-1">
+      <div className="relative flex flex-1 flex-col">
+        <div className="absolute right-3 top-3 z-10">
+          <MemoryReviewPanel />
+        </div>
         <ChatInterface
           sessionId={activeSession}
           onSessionCreated={(id) => {
