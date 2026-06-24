@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { MessageContent } from "@/components/message-content";
 import { ChatMessageImage } from "@/components/chat-message-image";
 import { MessageFeedback } from "@/components/message-feedback";
-import type { ChatMessage } from "@/types/database";
+import { AssessmentContextCard } from "@/components/assessment-context-card";
+import type { ChatMessage, MarketSnapshot } from "@/types/database";
 
 interface ChatInterfaceProps {
   sessionId: string | null;
@@ -23,6 +24,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
+  const [streamingMarket, setStreamingMarket] = useState<MarketSnapshot | null>(null);
   const [agentStatus, setAgentStatus] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -56,6 +58,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
     if (!input.trim() && !image) return;
     setIsLoading(true);
     setStreamingText("");
+    setStreamingMarket(null);
     setAgentStatus(null);
 
     const previewForMessage = imagePreview;
@@ -116,6 +119,8 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
               fullText += data.text;
               setStreamingText(fullText);
               setAgentStatus(null);
+            } else if (data.type === "metadata") {
+              if (data.marketSnapshot) setStreamingMarket(data.marketSnapshot);
             } else if (data.type === "error") {
               throw new Error(data.error);
             }
@@ -135,6 +140,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
       };
 
       setStreamingText("");
+      setStreamingMarket(null);
       setAgentStatus(null);
       setMessages((prev) => [...prev, assistantMsg]);
 
@@ -162,6 +168,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
         },
       ]);
       setStreamingText("");
+      setStreamingMarket(null);
       setAgentStatus(null);
     } finally {
       setIsLoading(false);
@@ -203,6 +210,9 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
                 {msg.role === "assistant" ? (
                   <>
                     <MessageContent content={msg.content} />
+                    {msg.market_context && (
+                      <AssessmentContextCard snapshot={msg.market_context} />
+                    )}
                     {sessionId && (
                       <MessageFeedback messageId={msg.id} sessionId={sessionId} />
                     )}
@@ -226,6 +236,7 @@ export function ChatInterface({ sessionId, onSessionCreated }: ChatInterfaceProp
                   </div>
                 )}
                 {streamingText && <MessageContent content={streamingText} />}
+                {streamingMarket && <AssessmentContextCard snapshot={streamingMarket} />}
                 {streamingText && (
                   <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-emerald-400" />
                 )}

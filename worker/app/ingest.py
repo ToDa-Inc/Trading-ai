@@ -38,6 +38,121 @@ def _resolve_storage_path(video: dict) -> str | None:
     return path or None
 
 
+def _as_list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _format_rule(rule: dict) -> str:
+    parts = [
+        f"Tipo: {rule.get('type', 'rule')}",
+        f"Regla: {rule.get('rule', '')}",
+    ]
+    conditions = _as_list(rule.get("conditions"))
+    visual_cues = _as_list(rule.get("visual_cues"))
+    if conditions:
+        parts.append("Condiciones: " + "; ".join(str(c) for c in conditions))
+    if visual_cues:
+        parts.append("Señales visuales: " + "; ".join(str(c) for c in visual_cues))
+    if rule.get("priority"):
+        parts.append(f"Prioridad: {rule['priority']}")
+    return "\n".join(part for part in parts if part.strip())
+
+
+def _format_example(example: dict, *, valid: bool) -> str:
+    label = "Ejemplo válido" if valid else "Ejemplo inválido / evitar"
+    parts = [
+        label,
+        f"Setup: {example.get('setup', '')}",
+        f"Contexto: {example.get('context', '')}",
+        f"Decisión: {example.get('decision', '')}",
+    ]
+    reasons = _as_list(example.get("reasons"))
+    if reasons:
+        parts.append("Razones: " + "; ".join(str(r) for r in reasons))
+    return "\n".join(part for part in parts if part.strip())
+
+
+def _build_knowledge_chunks(analysis: dict) -> list[dict]:
+    chunks: list[dict] = []
+
+    for rule in _as_list(analysis.get("atomic_rules")):
+        if isinstance(rule, dict) and rule.get("rule"):
+            chunks.append({
+                "content": _format_rule(rule),
+                "metadata": {
+                    "knowledge_type": "atomic_rule",
+                    "rule_type": rule.get("type"),
+                    "priority": rule.get("priority"),
+                    "conditions": _as_list(rule.get("conditions")),
+                    "visual_cues": _as_list(rule.get("visual_cues")),
+                },
+            })
+
+    for observation in _as_list(analysis.get("visual_observations")):
+        if observation:
+            chunks.append({
+                "content": f"Observación visual de estrategia:\n{observation}",
+                "metadata": {"knowledge_type": "visual_observation"},
+            })
+
+    for decision in _as_list(analysis.get("decision_points")):
+        if decision:
+            chunks.append({
+                "content": f"Lógica de decisión:\n{decision}",
+                "metadata": {"knowledge_type": "decision_point"},
+            })
+
+    for example in _as_list(analysis.get("valid_examples")):
+        if isinstance(example, dict):
+            chunks.append({
+                "content": _format_example(example, valid=True),
+                "metadata": {
+                    "knowledge_type": "valid_example",
+                    "setup": example.get("setup"),
+                },
+            })
+
+    for example in _as_list(analysis.get("invalid_examples")):
+        if isinstance(example, dict):
+            chunks.append({
+                "content": _format_example(example, valid=False),
+                "metadata": {
+                    "knowledge_type": "invalid_example",
+                    "setup": example.get("setup"),
+                },
+            })
+
+    for segment in _as_list(analysis.get("segments")):
+        if not isinstance(segment, dict):
+            continue
+        topic = segment.get("topic", "General")
+        content = segment.get("content", "")
+        if topic and topic not in content:
+            content = f"{topic}\n{content}"
+        rules = _as_list(segment.get("rules"))
+        if rules:
+            content += "\nReglas: " + "; ".join(str(rule) for rule in rules)
+        if content.strip():
+            chunks.append({
+                "content": content,
+                "metadata": {
+                    "knowledge_type": "segment",
+                    "topic": topic,
+                    "rules": rules,
+                },
+                "ts_start": segment.get("ts_start"),
+                "ts_end": segment.get("ts_end"),
+            })
+
+    if not chunks:
+        chunks.append({
+            "content": json.dumps(analysis.get("strategy", {}), ensure_ascii=False),
+            "metadata": {"knowledge_type": "strategy"},
+        })
+
+    return chunks
+
+
 def process_video(video_id: str, webhook_record: dict | None = None):
     """Full ingestion pipeline for a single video."""
     supabase = get_supabase()
@@ -104,17 +219,6 @@ def process_video(video_id: str, webhook_record: dict | None = None):
             "structured_json": analysis,
         }).execute()
 
-        segments = analysis.get("segments", [])
-        if not segments:
-            strategy = analysis.get("strategy", {})
-            segments = [{
-                "topic": "Estrategia completa",
-                "ts_start": 0,
-                "ts_end": None,
-                "content": json.dumps(strategy, ensure_ascii=False),
-                "rules": strategy.get("entry_rules", []) + strategy.get("exit_rules", []),
-            }]
-
         chunk_metadata_base = {
             "filename": video["filename"],
         }
@@ -123,28 +227,19 @@ def process_video(video_id: str, webhook_record: dict | None = None):
             if video.get("youtube_video_id"):
                 chunk_metadata_base["youtube_video_id"] = video["youtube_video_id"]
 
-        for segment in segments:
-            content = segment.get("content", "")
-            topic = segment.get("topic", "General")
-            if topic and topic not in content:
-                content = f"{topic}\n{content}"
-            rules = segment.get("rules", [])
-            if rules:
-                content += "\nReglas: " + "; ".join(rules)
-
-            embedding = embed_text(content)
+        for chunk in _build_knowledge_chunks(analysis):
+            embedding = embed_text(chunk["content"])
 
             supabase.table("chunks").insert({
                 "video_id": video_id,
                 "user_id": user_id,
-                "content": content,
+                "content": chunk["content"],
                 "metadata": {
                     **chunk_metadata_base,
-                    "topic": segment.get("topic"),
-                    "rules": rules,
+                    **chunk.get("metadata", {}),
                 },
-                "ts_start": segment.get("ts_start"),
-                "ts_end": segment.get("ts_end"),
+                "ts_start": chunk.get("ts_start"),
+                "ts_end": chunk.get("ts_end"),
                 "embedding": embedding,
             }).execute()
 

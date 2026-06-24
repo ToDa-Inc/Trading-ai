@@ -7,7 +7,8 @@ from json_repair import repair_json
 
 from app.config import settings
 
-ANALYSIS_PROMPT = """Analiza este video de trading en detalle. El usuario explica su técnica y estrategia de trading.
+ANALYSIS_PROMPT = """Analiza este video de trading como si estuvieras construyendo un playbook senior de la estrategia.
+Usa TODO lo disponible: audio, pantalla, gráficos, dibujos, indicadores, zonas marcadas, velas, estructura, liquidez y ejemplos visibles.
 
 Devuelve un JSON con esta estructura exacta:
 {
@@ -23,6 +24,37 @@ Devuelve un JSON con esta estructura exacta:
     "patterns": ["patrón 1", "patrón 2"],
     "do_not_trade": ["condiciones donde NO operar"]
   },
+  "visual_observations": [
+    "observación visual concreta del gráfico/pantalla que afecte la estrategia"
+  ],
+  "decision_points": [
+    "lógica de decisión: por qué un setup sería válido, inválido o de baja calidad"
+  ],
+  "atomic_rules": [
+    {
+      "type": "entry_rule | exit_rule | risk_rule | poi_rule | fvg_rule | liquidity_rule | structure_rule | no_trade_rule | execution_rule",
+      "rule": "regla atómica y accionable en una frase",
+      "conditions": ["condición necesaria 1", "condición necesaria 2"],
+      "visual_cues": ["señal visual en el gráfico/pantalla"],
+      "priority": "high | medium | low"
+    }
+  ],
+  "valid_examples": [
+    {
+      "setup": "setup o patrón",
+      "context": "contexto visual/estructural",
+      "decision": "por qué sería válido",
+      "reasons": ["razón 1", "razón 2"]
+    }
+  ],
+  "invalid_examples": [
+    {
+      "setup": "setup o patrón",
+      "context": "contexto visual/estructural",
+      "decision": "por qué sería inválido o evitable",
+      "reasons": ["razón 1", "razón 2"]
+    }
+  ],
   "segments": [
     {
       "topic": "tema del segmento",
@@ -34,7 +66,8 @@ Devuelve un JSON con esta estructura exacta:
   ]
 }
 
-Sé exhaustivo. Captura TODAS las reglas, condiciones, indicadores y matices que el trader mencione.
+Sé exhaustivo. Captura tanto lo que el trader DICE como lo que se VE en el gráfico. Convierte cada criterio importante en reglas atómicas.
+No escribas "en el video", "se ve en pantalla" ni referencias a timestamps. Redacta como conocimiento reutilizable de estrategia.
 Responde SOLO con el JSON válido, sin markdown ni texto adicional."""
 
 STRATEGY_MERGE_PROMPT = """Tienes un perfil de estrategia de trading existente y un nuevo análisis.
@@ -126,6 +159,46 @@ VIDEO_ANALYSIS_SCHEMA = {
                 "required": ["topic", "content"],
             },
         },
+        "visual_observations": {"type": "array", "items": {"type": "string"}},
+        "decision_points": {"type": "array", "items": {"type": "string"}},
+        "atomic_rules": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string"},
+                    "rule": {"type": "string"},
+                    "conditions": {"type": "array", "items": {"type": "string"}},
+                    "visual_cues": {"type": "array", "items": {"type": "string"}},
+                    "priority": {"type": "string"},
+                },
+                "required": ["type", "rule"],
+            },
+        },
+        "valid_examples": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "setup": {"type": "string"},
+                    "context": {"type": "string"},
+                    "decision": {"type": "string"},
+                    "reasons": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+        "invalid_examples": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "setup": {"type": "string"},
+                    "context": {"type": "string"},
+                    "decision": {"type": "string"},
+                    "reasons": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
     },
     "required": ["transcript", "strategy", "segments"],
 }
@@ -145,6 +218,7 @@ def _video_analysis_request_body(video_url: str, *, force_ai_studio: bool = Fals
         ],
         "temperature": 0.2,
         "max_tokens": 16384,
+        "reasoning": {"effort": "high"},
         "response_format": {
             "type": "json_schema",
             "json_schema": {

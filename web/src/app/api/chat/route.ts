@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { runChatAgent } from "@/lib/chat-agent";
+import type { MarketSnapshot } from "@/types/database";
 
 export const maxDuration = 60;
 
@@ -89,6 +90,7 @@ export async function POST(request: NextRequest) {
 
       let fullText = "";
       let citations: Array<{ video_id: string; ts_start?: number; topic?: string }> = [];
+      let marketContext: MarketSnapshot | null = null;
 
       try {
         for await (const event of runChatAgent({
@@ -108,7 +110,13 @@ export async function POST(request: NextRequest) {
             send({ type: "token", text: event.text });
           } else if (event.type === "metadata") {
             citations = event.citations;
-            send({ type: "metadata", intent: event.intent, citations: event.citations });
+            marketContext = event.marketSnapshot ?? null;
+            send({
+              type: "metadata",
+              intent: event.intent,
+              citations: event.citations,
+              marketSnapshot: marketContext,
+            });
           } else if (event.type === "done") {
             await serviceClient.from("chat_messages").insert({
               session_id: activeSessionId,
@@ -116,6 +124,7 @@ export async function POST(request: NextRequest) {
               role: "assistant",
               content: fullText,
               citations,
+              market_context: marketContext,
             });
 
             await serviceClient

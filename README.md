@@ -36,7 +36,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_VIDEO_MODEL=google/gemini-3.1-flash-lite
+OPENROUTER_VIDEO_MODEL=google/gemini-3-flash-preview
 OPENROUTER_CHAT_MODEL=google/gemini-3.1-flash-lite
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 OPENROUTER_EMBEDDING_DIMENSIONS=768
@@ -49,7 +49,7 @@ WORKER_URL=https://tu-worker.railway.app
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_VIDEO_MODEL=google/gemini-3.1-flash-lite
+OPENROUTER_VIDEO_MODEL=google/gemini-3-flash-preview
 OPENROUTER_EMBEDDING_MODEL=openai/text-embedding-3-small
 OPENROUTER_EMBEDDING_DIMENSIONS=768
 WORKER_SECRET=tu-secreto-aleatorio
@@ -129,7 +129,7 @@ Los videos de **YouTube** se analizan en Vercel vía OpenRouter. Los **archivos 
 
 | Uso | Modelo | Endpoint |
 |-----|--------|----------|
-| Análisis de video (worker) | `google/gemini-3.1-flash-lite` | `/chat/completions` + `video_url` |
+| Análisis de video (worker/Vercel ingest) | `google/gemini-3-flash-preview` + `reasoning.high` | `/chat/completions` + `video_url` |
 | Chat + capturas (web) | `google/gemini-3.1-flash-lite` | `/chat/completions` + `image_url` |
 | Embeddings RAG (index + query) | `openai/text-embedding-3-small` @ 768d | `/embeddings` |
 

@@ -1,11 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  buildMarketSnapshot,
+  formatMarketSnapshotForPrompt,
+  normalizeForexSymbol,
+} from "@/lib/market-context";
+import {
   chatCompletionJson,
   embedQuery,
   streamChatCompletion,
   type ChatMessageParam,
   type ChunkMatch,
 } from "@/lib/openrouter";
+import type { MarketSnapshot } from "@/types/database";
 
 export type ChatIntent = "trade_assessment" | "strategy_question" | "followup";
 
@@ -17,6 +23,7 @@ export type AgentStreamEvent =
       type: "metadata";
       intent: ChatIntent;
       citations: Array<{ video_id: string; ts_start?: number; topic?: string }>;
+      marketSnapshot?: MarketSnapshot | null;
     }
   | { type: "done" }
   | { type: "error"; error: string };
@@ -46,13 +53,14 @@ const RETRIEVAL_MAX = 20;
 const TRADE_ASSESSMENT_PROMPT = `Eres un evaluador de operaciones de trading. Tu trabajo es juzgar si una operación cumple la estrategia personal del usuario.
 
 REGLAS ESTRICTAS:
-1. Usa ÚNICAMENTE el perfil de estrategia, los fragmentos de conocimiento, las correcciones aprobadas del usuario y los hechos observados proporcionados.
+1. Usa ÚNICAMENTE el perfil de estrategia, el conocimiento recuperado, las correcciones aprobadas del usuario y los hechos observados proporcionados.
 2. Las correcciones aprobadas del usuario tienen prioridad sobre interpretaciones anteriores del asistente.
-2. Si falta información para evaluar, indica "Información insuficiente" como recomendación y lista qué falta confirmar.
-3. Nunca inventes reglas ni datos del gráfico que no estén en el contexto.
-4. Presenta el juicio como criterios del usuario ("tu estrategia indica...", "según tus reglas...").
-5. NUNCA menciones videos, timestamps, fragmentos ni fuentes.
-6. Sigue este proceso interno: identificar setup → revisar reglas de entrada → revisar gestión de riesgo → revisar condiciones de no operar → emitir veredicto.
+3. El contexto de mercado es solo referencia factual; no uses el precio de mercado para recomendar operar si la estrategia del usuario no lo permite.
+4. Si falta información para evaluar, indica "Información insuficiente" como recomendación y lista qué falta confirmar.
+5. Nunca inventes reglas ni datos del gráfico que no estén en el contexto.
+6. Presenta el juicio como criterios del usuario ("tu estrategia indica...", "según tus reglas...").
+7. NUNCA menciones videos, timestamps, fragmentos ni fuentes.
+8. Sigue este proceso interno: identificar setup → revisar reglas de entrada → revisar gestión de riesgo → revisar condiciones de no operar → emitir veredicto.
 
 FORMATO OBLIGATORIO:
 - **Recomendación:** Alta / Media / Baja / No recomendada / Información insuficiente
@@ -67,7 +75,7 @@ Responde en español, claro y directo. Usa markdown ligero.`;
 const STRATEGY_QA_PROMPT = `Eres un coach de trading que responde preguntas sobre la estrategia personal del usuario.
 
 REGLAS ESTRICTAS:
-1. Responde ÚNICAMENTE con el conocimiento del perfil y los fragmentos proporcionados.
+1. Responde ÚNICAMENTE con el conocimiento del perfil y la información recuperada proporcionada.
 2. Si la información no está en el contexto, di "No tengo esa información en tu estrategia".
 3. Nunca inventes reglas ni recomendaciones que el usuario no haya definido.
 4. Presenta el conocimiento como reglas del propio usuario ("tu estrategia indica...").
@@ -77,7 +85,7 @@ REGLAS ESTRICTAS:
 const FOLLOWUP_PROMPT = `Eres un coach de trading en una conversación continua. El usuario hace seguimiento sobre su estrategia o una evaluación previa.
 
 REGLAS:
-1. Usa el historial de conversación, el perfil de estrategia y los fragmentos proporcionados.
+1. Usa el historial de conversación, el perfil de estrategia y la información recuperada proporcionada.
 2. Mantén coherencia con mensajes anteriores del asistente en esta sesión.
 3. No inventes reglas. Si falta contexto, dilo.
 4. NUNCA menciones videos, timestamps ni fuentes.
@@ -212,7 +220,10 @@ function buildRetrievalQueries(
   queries.add(base);
 
   if (intent === "trade_assessment") {
-    queries.add("reglas de entrada condiciones setup patrón indicadores");
+    queries.add("reglas atómicas de entrada condiciones setup patrón indicadores");
+    queries.add("señales visuales gráfico fvg poi liquidez estructura confirmación");
+    queries.add("ejemplos válidos setup contexto decisión razones");
+    queries.add("ejemplos inválidos evitar invalidación baja calidad");
     queries.add("gestión de riesgo stop loss tamaño posición");
     queries.add("condiciones no operar evitar operación filtros");
     if (tradeFacts) {
@@ -304,8 +315,8 @@ function buildKnowledgeContext(chunks: ChunkMatch[]): string {
   return chunks
     .map((c, i) => {
       const topic = (c.metadata?.topic as string) || `Área ${i + 1}`;
-      const relevance = Math.round(c.similarity * 100);
-      return `### ${topic} (relevancia ${relevance}%)\n${c.content}`;
+      const knowledgeType = (c.metadata?.knowledge_type as string) || "knowledge";
+      return `### ${topic} [${knowledgeType}]\n${c.content}`;
     })
     .join("\n\n");
 }
@@ -318,6 +329,7 @@ function buildUserPrompt(input: {
   hasStrategy: boolean;
   approvedMemories: string[];
   sessionMemories: string[];
+  marketSnapshot?: MarketSnapshot;
 }): string {
   const sections = [
     "## Perfil de estrategia del usuario",
@@ -339,6 +351,14 @@ function buildUserPrompt(input: {
       "## Correcciones de esta conversación",
       "Aplican solo en esta sesión y tienen prioridad sobre interpretaciones anteriores:",
       ...input.sessionMemories.map((m) => `- ${m}`)
+    );
+  }
+
+  if (input.marketSnapshot) {
+    sections.push(
+      "",
+      "## Contexto de mercado (solo referencia, no es recomendación)",
+      formatMarketSnapshotForPrompt(input.marketSnapshot)
     );
   }
 
@@ -500,6 +520,20 @@ export async function* runChatAgent(
       );
     }
 
+    let marketSnapshot: MarketSnapshot | null = null;
+    if (
+      intent === "trade_assessment" &&
+      tradeFacts &&
+      normalizeForexSymbol(tradeFacts.asset)
+    ) {
+      yield { type: "status", text: "Consultando contexto de mercado..." };
+      try {
+        marketSnapshot = await buildMarketSnapshot(tradeFacts);
+      } catch {
+        marketSnapshot = null;
+      }
+    }
+
     yield { type: "status", text: "Buscando reglas relevantes..." };
     const queries = buildRetrievalQueries(input.message, intent, tradeFacts);
     const chunks = await retrieveChunks(
@@ -517,6 +551,7 @@ export async function* runChatAgent(
         type: "metadata",
         intent,
         citations: [],
+        marketSnapshot: null,
       };
       yield { type: "done" };
       return;
@@ -538,6 +573,7 @@ export async function* runChatAgent(
       hasStrategy,
       approvedMemories: learningMemories.approved,
       sessionMemories: learningMemories.session,
+      marketSnapshot: marketSnapshot ?? undefined,
     });
 
     const messages = buildMessages({
@@ -554,7 +590,7 @@ export async function* runChatAgent(
       yield { type: "token", text: token };
     }
 
-    yield { type: "metadata", intent, citations };
+    yield { type: "metadata", intent, citations, marketSnapshot };
     yield { type: "done" };
   } catch (err) {
     yield {

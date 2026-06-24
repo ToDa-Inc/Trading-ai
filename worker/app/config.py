@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     openrouter_site_url: str = "http://localhost:8000"
     openrouter_app_name: str = "Trading Coach Worker"
     # Multimodal: video analysis + chat + image screenshots
-    openrouter_video_model: str = "google/gemini-3.1-flash-lite"
+    openrouter_video_model: str = "google/gemini-3-flash-preview"
     openrouter_chat_model: str = "google/gemini-3.1-flash-lite"
     # RAG: separate embedding model (768-dim vectors in pgvector)
     openrouter_embedding_model: str = "openai/text-embedding-3-small"

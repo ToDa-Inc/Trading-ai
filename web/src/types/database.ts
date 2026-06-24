@@ -31,7 +31,25 @@ export interface ChatMessage {
   content: string;
   image_path: string | null;
   citations: Array<{ video_id: string; ts_start?: number; topic?: string }>;
+  market_context?: MarketSnapshot | null;
   created_at: string;
+}
+
+export interface MarketSnapshot {
+  symbol: string;
+  timeframe: string | null;
+  session: string;
+  referencePrice: number;
+  chartEntry: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  entryVsReferencePips: number | null;
+  stopPips: number | null;
+  rewardPips: number | null;
+  riskReward: string | null;
+  source: string;
+  asOf: string;
+  freshness: "live" | "delayed" | "daily";
 }
 
 export interface ChunkMatch {

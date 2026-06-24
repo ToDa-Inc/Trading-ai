@@ -1,7 +1,7 @@
 const OPENROUTER_BASE_URL =
   process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
 const VIDEO_MODEL =
-  process.env.OPENROUTER_VIDEO_MODEL || "google/gemini-3.1-flash-lite";
+  process.env.OPENROUTER_VIDEO_MODEL || "google/gemini-3-flash-preview";
 const CHAT_MODEL =
   process.env.OPENROUTER_CHAT_MODEL || "google/gemini-3.1-flash-lite";
 const EMBEDDING_MODEL =
@@ -10,7 +10,8 @@ const EMBEDDING_DIMENSIONS = Number(
   process.env.OPENROUTER_EMBEDDING_DIMENSIONS || "768"
 );
 
-const ANALYSIS_PROMPT = `Analiza este video de trading en detalle. El usuario explica su técnica y estrategia de trading.
+const ANALYSIS_PROMPT = `Analiza este video de trading como si estuvieras construyendo un playbook senior de la estrategia.
+Usa TODO lo disponible: audio, pantalla, gráficos, dibujos, indicadores, zonas marcadas, velas, estructura, liquidez y ejemplos visibles.
 
 Devuelve un JSON con esta estructura exacta:
 {
@@ -26,6 +27,37 @@ Devuelve un JSON con esta estructura exacta:
     "patterns": ["patrón 1", "patrón 2"],
     "do_not_trade": ["condiciones donde NO operar"]
   },
+  "visual_observations": [
+    "observación visual concreta del gráfico/pantalla que afecte la estrategia"
+  ],
+  "decision_points": [
+    "lógica de decisión: por qué un setup sería válido, inválido o de baja calidad"
+  ],
+  "atomic_rules": [
+    {
+      "type": "entry_rule | exit_rule | risk_rule | poi_rule | fvg_rule | liquidity_rule | structure_rule | no_trade_rule | execution_rule",
+      "rule": "regla atómica y accionable en una frase",
+      "conditions": ["condición necesaria 1", "condición necesaria 2"],
+      "visual_cues": ["señal visual en el gráfico/pantalla"],
+      "priority": "high | medium | low"
+    }
+  ],
+  "valid_examples": [
+    {
+      "setup": "setup o patrón",
+      "context": "contexto visual/estructural",
+      "decision": "por qué sería válido",
+      "reasons": ["razón 1", "razón 2"]
+    }
+  ],
+  "invalid_examples": [
+    {
+      "setup": "setup o patrón",
+      "context": "contexto visual/estructural",
+      "decision": "por qué sería inválido o evitable",
+      "reasons": ["razón 1", "razón 2"]
+    }
+  ],
   "segments": [
     {
       "topic": "tema del segmento",
@@ -37,7 +69,8 @@ Devuelve un JSON con esta estructura exacta:
   ]
 }
 
-Sé exhaustivo. Captura TODAS las reglas, condiciones, indicadores y matices que el trader mencione.
+Sé exhaustivo. Captura tanto lo que el trader DICE como lo que se VE en el gráfico. Convierte cada criterio importante en reglas atómicas.
+No escribas "en el video", "se ve en pantalla" ni referencias a timestamps. Redacta como conocimiento reutilizable de estrategia.
 Responde SOLO con el JSON válido, sin markdown ni texto adicional.`;
 
 const VIDEO_ANALYSIS_SCHEMA = {
@@ -72,6 +105,46 @@ const VIDEO_ANALYSIS_SCHEMA = {
         required: ["topic", "content"],
       },
     },
+    visual_observations: { type: "array", items: { type: "string" } },
+    decision_points: { type: "array", items: { type: "string" } },
+    atomic_rules: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string" },
+          rule: { type: "string" },
+          conditions: { type: "array", items: { type: "string" } },
+          visual_cues: { type: "array", items: { type: "string" } },
+          priority: { type: "string" },
+        },
+        required: ["type", "rule"],
+      },
+    },
+    valid_examples: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          setup: { type: "string" },
+          context: { type: "string" },
+          decision: { type: "string" },
+          reasons: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+    invalid_examples: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          setup: { type: "string" },
+          context: { type: "string" },
+          decision: { type: "string" },
+          reasons: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
   },
   required: ["transcript", "strategy", "segments"],
 };
@@ -79,6 +152,17 @@ const VIDEO_ANALYSIS_SCHEMA = {
 export interface VideoAnalysis {
   transcript: string;
   strategy: Record<string, unknown>;
+  visual_observations?: string[];
+  decision_points?: string[];
+  atomic_rules?: Array<{
+    type?: string;
+    rule: string;
+    conditions?: string[];
+    visual_cues?: string[];
+    priority?: string;
+  }>;
+  valid_examples?: StrategyExample[];
+  invalid_examples?: StrategyExample[];
   segments: Array<{
     topic: string;
     ts_start?: number;
@@ -86,6 +170,20 @@ export interface VideoAnalysis {
     content: string;
     rules?: string[];
   }>;
+}
+
+interface StrategyExample {
+  setup?: string;
+  context?: string;
+  decision?: string;
+  reasons?: string[];
+}
+
+interface KnowledgeChunk {
+  content: string;
+  metadata: Record<string, unknown>;
+  ts_start?: number | null;
+  ts_end?: number | null;
 }
 
 function openRouterHeaders(): HeadersInit {
@@ -143,6 +241,7 @@ export async function analyzeYoutubeVideo(youtubeUrl: string): Promise<VideoAnal
       ],
       temperature: 0.2,
       max_tokens: 16384,
+      reasoning: { effort: "high" },
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -237,6 +336,120 @@ Responde SOLO con el markdown.`,
   return result.choices?.[0]?.message?.content?.trim() ?? "";
 }
 
+function asList<T>(value: T[] | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function formatRule(rule: NonNullable<VideoAnalysis["atomic_rules"]>[number]): string {
+  const parts = [
+    `Tipo: ${rule.type || "rule"}`,
+    `Regla: ${rule.rule}`,
+  ];
+  if (asList(rule.conditions).length > 0) {
+    parts.push(`Condiciones: ${asList(rule.conditions).join("; ")}`);
+  }
+  if (asList(rule.visual_cues).length > 0) {
+    parts.push(`Señales visuales: ${asList(rule.visual_cues).join("; ")}`);
+  }
+  if (rule.priority) {
+    parts.push(`Prioridad: ${rule.priority}`);
+  }
+  return parts.filter((part) => part.trim()).join("\n");
+}
+
+function formatExample(example: StrategyExample, valid: boolean): string {
+  const parts = [
+    valid ? "Ejemplo válido" : "Ejemplo inválido / evitar",
+    example.setup && `Setup: ${example.setup}`,
+    example.context && `Contexto: ${example.context}`,
+    example.decision && `Decisión: ${example.decision}`,
+  ].filter(Boolean) as string[];
+  if (asList(example.reasons).length > 0) {
+    parts.push(`Razones: ${asList(example.reasons).join("; ")}`);
+  }
+  return parts.join("\n");
+}
+
+function buildKnowledgeChunks(analysis: VideoAnalysis): KnowledgeChunk[] {
+  const chunks: KnowledgeChunk[] = [];
+
+  for (const rule of asList(analysis.atomic_rules)) {
+    if (!rule?.rule) continue;
+    chunks.push({
+      content: formatRule(rule),
+      metadata: {
+        knowledge_type: "atomic_rule",
+        rule_type: rule.type,
+        priority: rule.priority,
+        conditions: asList(rule.conditions),
+        visual_cues: asList(rule.visual_cues),
+      },
+    });
+  }
+
+  for (const observation of asList(analysis.visual_observations)) {
+    if (!observation) continue;
+    chunks.push({
+      content: `Observación visual de estrategia:\n${observation}`,
+      metadata: { knowledge_type: "visual_observation" },
+    });
+  }
+
+  for (const decision of asList(analysis.decision_points)) {
+    if (!decision) continue;
+    chunks.push({
+      content: `Lógica de decisión:\n${decision}`,
+      metadata: { knowledge_type: "decision_point" },
+    });
+  }
+
+  for (const example of asList(analysis.valid_examples)) {
+    chunks.push({
+      content: formatExample(example, true),
+      metadata: { knowledge_type: "valid_example", setup: example.setup },
+    });
+  }
+
+  for (const example of asList(analysis.invalid_examples)) {
+    chunks.push({
+      content: formatExample(example, false),
+      metadata: { knowledge_type: "invalid_example", setup: example.setup },
+    });
+  }
+
+  for (const segment of asList(analysis.segments)) {
+    const topic = segment.topic ?? "General";
+    let content = segment.content ?? "";
+    if (topic && !content.startsWith(topic)) {
+      content = `${topic}\n${content}`;
+    }
+    const rules = asList(segment.rules);
+    if (rules.length > 0) {
+      content += `\nReglas: ${rules.join("; ")}`;
+    }
+    if (!content.trim()) continue;
+    chunks.push({
+      content,
+      metadata: {
+        knowledge_type: "segment",
+        topic,
+        rules,
+      },
+      ts_start: segment.ts_start ?? null,
+      ts_end: segment.ts_end ?? null,
+    });
+  }
+
+  if (chunks.length === 0) {
+    chunks.push({
+      content: JSON.stringify(analysis.strategy ?? {}),
+      metadata: { knowledge_type: "strategy" },
+    });
+  }
+
+  return chunks;
+}
+
 export interface VideoRow {
   id: string;
   user_id: string;
@@ -289,22 +502,6 @@ export async function processYoutubeVideo(
     structured_json: analysis,
   });
 
-  let segments = analysis.segments ?? [];
-  if (segments.length === 0) {
-    segments = [
-      {
-        topic: "Estrategia completa",
-        ts_start: 0,
-        ts_end: null,
-        content: JSON.stringify(analysis.strategy ?? {}),
-        rules: [
-          ...((analysis.strategy?.entry_rules as string[]) ?? []),
-          ...((analysis.strategy?.exit_rules as string[]) ?? []),
-        ],
-      },
-    ];
-  }
-
   const chunkMetaBase: Record<string, unknown> = {
     filename: merged.filename,
     youtube_url: youtubeUrl,
@@ -313,30 +510,19 @@ export async function processYoutubeVideo(
     chunkMetaBase.youtube_video_id = merged.youtube_video_id;
   }
 
-  for (const segment of segments) {
-    const topic = segment.topic ?? "General";
-    let content = segment.content ?? "";
-    if (topic && !content.startsWith(topic)) {
-      content = `${topic}\n${content}`;
-    }
-    const rules = segment.rules ?? [];
-    if (rules.length > 0) {
-      content += `\nReglas: ${rules.join("; ")}`;
-    }
-
-    const embedding = await embedDocument(content);
+  for (const chunk of buildKnowledgeChunks(analysis)) {
+    const embedding = await embedDocument(chunk.content);
 
     await supabase.from("chunks").insert({
       video_id: videoId,
       user_id: merged.user_id,
-      content,
+      content: chunk.content,
       metadata: {
         ...chunkMetaBase,
-        topic: segment.topic,
-        rules,
+        ...chunk.metadata,
       },
-      ts_start: segment.ts_start ?? null,
-      ts_end: segment.ts_end ?? null,
+      ts_start: chunk.ts_start ?? null,
+      ts_end: chunk.ts_end ?? null,
       embedding,
     });
   }
