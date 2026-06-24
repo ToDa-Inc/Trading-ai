@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { processYoutubeVideo, resolveYoutubeUrl } from "@/lib/video-ingest";
+import { forwardToWorker, processYoutubeVideo, resolveYoutubeUrl } from "@/lib/video-ingest";
 
 export const maxDuration = 300;
 
@@ -33,15 +33,35 @@ export async function POST(
   }
 
   const youtubeUrl = resolveYoutubeUrl(video);
-  if (!youtubeUrl) {
-    return NextResponse.json(
-      { error: "Solo videos de YouTube se procesan desde la web. Los archivos usan el worker." },
-      { status: 400 }
-    );
-  }
-
   if (video.status === "processing") {
     return NextResponse.json({ status: "already_processing" });
+  }
+
+  if (!youtubeUrl) {
+    if (!video.storage_path) {
+      return NextResponse.json(
+        { error: "El video no tiene URL de YouTube ni archivo asociado." },
+        { status: 400 }
+      );
+    }
+
+    try {
+      await forwardToWorker(videoId);
+      return NextResponse.json({ status: "queued", processor: "worker", video_id: videoId });
+    } catch (err) {
+      await service
+        .from("videos")
+        .update({
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        })
+        .eq("id", videoId);
+
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 502 }
+      );
+    }
   }
 
   after(async () => {

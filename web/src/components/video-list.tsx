@@ -34,6 +34,7 @@ function VideoThumbnail({ video }: { video: Video }) {
 export function VideoList() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reprocessingIds, setReprocessingIds] = useState<Set<string>>(new Set());
 
   const fetchVideos = async () => {
     const supabase = createClient();
@@ -90,15 +91,30 @@ export function VideoList() {
     fetchVideos();
   };
 
-  const retryVideo = async (video: Video) => {
-    if (!video.youtube_url && !video.youtube_video_id) return;
-    const res = await fetch(`/api/videos/${video.id}/process`, { method: "POST" });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      alert((body as { error?: string }).error || "Error al reintentar");
-      return;
+  const reprocessVideo = async (video: Video) => {
+    if (video.status === "processing" || reprocessingIds.has(video.id)) return;
+
+    const confirmed =
+      video.status === "error" ||
+      confirm(`¿Reprocesar "${video.filename}"? Esto reconstruirá su análisis y memoria.`);
+    if (!confirmed) return;
+
+    setReprocessingIds((prev) => new Set(prev).add(video.id));
+    try {
+      const res = await fetch(`/api/videos/${video.id}/process`, { method: "POST" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        alert((body as { error?: string }).error || "Error al reprocesar");
+        return;
+      }
+      fetchVideos();
+    } finally {
+      setReprocessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(video.id);
+        return next;
+      });
     }
-    fetchVideos();
   };
 
   if (loading) {
@@ -181,13 +197,16 @@ export function VideoList() {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    {video.status === "error" && video.youtube_url && (
+                    {video.status !== "processing" && (
                       <button
-                        onClick={() => retryVideo(video)}
-                        className="text-zinc-500 hover:text-emerald-400"
-                        title="Reintentar análisis"
+                        onClick={() => reprocessVideo(video)}
+                        className="text-zinc-500 hover:text-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        title="Reprocesar análisis y memoria"
+                        disabled={reprocessingIds.has(video.id)}
                       >
-                        <RotateCcw className="h-4 w-4" />
+                        <RotateCcw
+                          className={`h-4 w-4 ${reprocessingIds.has(video.id) ? "animate-spin" : ""}`}
+                        />
                       </button>
                     )}
                     <button
